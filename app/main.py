@@ -4,6 +4,7 @@ from fastapi import FastAPI, HTTPException, Query
 
 from app.mock_scanner import build_mock_findings
 from app.schemas import (
+    ErrorResponse,
     FindingPage,
     ScanAccepted,
     ScanHistory,
@@ -38,7 +39,11 @@ def submit_scan(submission: ScanSubmission) -> ScanAccepted:
     )
 
 
-@app.get("/api/v1/scans/{scan_id}", response_model=ScanRecord)
+@app.get(
+    "/api/v1/scans/{scan_id}",
+    response_model=ScanRecord,
+    responses={404: {"model": ErrorResponse, "description": "Scan not found"}},
+)
 def get_scan(scan_id: UUID) -> ScanRecord:
     scan = scans.get(scan_id)
 
@@ -63,7 +68,11 @@ def list_scans(
     )
 
 
-@app.get("/api/v1/scans/{scan_id}/findings", response_model=FindingPage)
+@app.get(
+    "/api/v1/scans/{scan_id}/findings",
+    response_model=FindingPage,
+    responses={404: {"model": ErrorResponse, "description": "Scan not found"}},
+)
 def list_findings(
     scan_id: UUID,
     severity: Severity | None = Query(default=None),

@@ -245,3 +245,19 @@ def test_separate_submissions_keep_distinct_records() -> None:
         retrieved = client.get(submitted.json()["status_url"])
         assert retrieved.status_code == 200
         assert retrieved.json()["image_reference"] == expected_image
+
+
+@pytest.mark.parametrize(
+    "path", ["/api/v1/scans/{scan_id}", "/api/v1/scans/{scan_id}/findings"]
+)
+def test_retrieval_contract_documents_not_found(path: str) -> None:
+    response = client.get("/openapi.json")
+    assert response.status_code == 200
+    contract = response.json()
+    responses = contract["paths"][path]["get"]["responses"]
+    assert "404" in responses
+    schema = responses["404"]["content"]["application/json"]["schema"]
+    assert schema["$ref"] == "#/components/schemas/ErrorResponse"
+    error = contract["components"]["schemas"]["ErrorResponse"]
+    assert error["properties"]["detail"]["type"] == "string"
+    assert "detail" in error["required"]

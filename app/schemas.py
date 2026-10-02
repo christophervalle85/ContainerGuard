@@ -60,3 +60,7 @@ class FindingPage(BaseModel):
     limit: int
     offset: int
     mock: Literal[True] = True
+
+
+class ErrorResponse(BaseModel):
+    detail: str
