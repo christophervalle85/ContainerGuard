@@ -3,7 +3,13 @@ name = "containerguard"
 version = "0.1.0"
 description = "Container vulnerability scanning and security policy evaluation"
 requires-python = ">=3.14,<3.15"
-dependencies = ["fastapi", "uvicorn"]
+dependencies = [
+    "alembic>=1.14,<2",
+    "fastapi",
+    "psycopg[binary]>=3.2,<4",
+    "sqlalchemy>=2.0,<3",
+    "uvicorn",
+]
 
 [dependency-groups]
 dev = ["pytest", "httpx2", "ruff"]

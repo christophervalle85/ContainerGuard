@@ -1,26 +1,22 @@
-# M2: PostgreSQL persistence
+# Persistence architecture
 
-## Purpose and agreed scope
+Status: implemented locally; remote CI verification is pending.
 
-Replace M1's process-local dictionaries with durable scan history. Keep the
-existing API workflow and response shapes compatible. Continue returning
-clearly fictional findings; registry resolution and real Trivy scans belong to M3.
+## Scope
 
-The learning cadence stays mixed: prepare infrastructure and supporting code,
-explain each piece, and let the learner implement focused model/query exercises.
-Work in small test-first slices rather than generating the entire milestone.
+Replace process-local dictionaries with durable scan history while preserving
+the existing API response shapes. Scanning continues to use explicitly fictional
+findings until registry resolution and Trivy integration are implemented.
 
 ## Architecture
 
 FastAPI routes use a request-scoped synchronous SQLAlchemy session and a small
 repository module for queries. PostgreSQL stores records. Alembic owns schema
 changes. Docker Compose initially runs PostgreSQL only; the API still runs
-locally through uv. Full backend containerization belongs to M5.
+locally through uv. Full backend containerization is outside this change.
 
-Choose a PostgreSQL release, Python driver, and library versions after checking
-current compatibility during implementation. Lock Python dependencies and use
-an explicit PostgreSQL image version. Do not use SQLite as a substitute for
-PostgreSQL integration tests.
+Local development and CI use PostgreSQL 17, SQLAlchemy with Psycopg, and Alembic.
+Python dependencies are locked in uv.lock. Integration tests use PostgreSQL.
 
 ## Tables and relationships
 
@@ -74,8 +70,8 @@ documented 404. Invalid inputs still return 422. Database failures return a safe
 OpenAPI and test that failed writes are not accepted.
 
 Use explicit conversion from database records to existing response models.
-Continue exposing mock: true in findings responses during this milestone.
-Remove production use of app/store.py once the database routes are verified.
+Continue exposing mock: true while findings come from the mock scanner.
+Routes use the repository directly; no process-local scan store remains.
 
 ## Configuration and local development
 
@@ -108,10 +104,10 @@ CI starts a PostgreSQL service, waits for readiness, runs migrations, then runs
 the API/database suite plus existing lint/format checks. No live registry access
 is needed. The health-only endpoint remains a process liveness check.
 
-## Completion evidence
+## Verification
 
 - Migrations create the schema from an empty PostgreSQL database.
-- Existing M1 API behavior works through PostgreSQL with isolated tests in CI.
+- Existing API behavior works through PostgreSQL with isolated tests in CI.
 - Scan and findings insertion is atomic; storage constraints are verified.
 - A failed unresolved attempt can be stored without an Image row.
 - Submit through the API, restart the API, and retrieve the same ID and findings.
@@ -121,6 +117,6 @@ is needed. The health-only endpoint remains a process liveness check.
 
 ## Deferred work
 
-Actual digest resolution and scanner execution (M3), queue/workers (M4), full
-backend Compose packaging (M5), accounts/policies/dashboard, and cloud deployment.
-No background-job implementation or real image scans are needed to finish M2.
+Digest resolution, real scanner execution, background workers, full backend
+containerization, accounts, policies, the dashboard, and cloud deployment are
+outside the persistence implementation.
