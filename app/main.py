@@ -1,8 +1,13 @@
-from uuid import UUID, uuid4
+from typing import Annotated
+from uuid import UUID
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
-from app.mock_scanner import build_mock_findings
+from app import repository
+from app.database import get_session
 from app.schemas import (
     ErrorResponse,
     FindingPage,
@@ -12,9 +17,26 @@ from app.schemas import (
     ScanSubmission,
     Severity,
 )
-from app.store import findings, scans
 
 app = FastAPI(title="ContainerGuard")
+
+DatabaseSession = Annotated[Session, Depends(get_session)]
+DATABASE_ERROR_RESPONSES = {
+    503: {
+        "model": ErrorResponse,
+        "description": "Database temporarily unavailable",
+    }
+}
+
+
+@app.exception_handler(SQLAlchemyError)
+async def handle_database_error(
+    request: Request, error: SQLAlchemyError
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "Database temporarily unavailable"},
+    )
 
 
 @app.get("/health")
@@ -22,30 +44,29 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/api/v1/scans", status_code=202, response_model=ScanAccepted)
-def submit_scan(submission: ScanSubmission) -> ScanAccepted:
-    scan_id = uuid4()
-    scans[scan_id] = ScanRecord(
-        scan_id=scan_id,
-        image_reference=submission.image_reference,
-        status="completed",
-    )
-
-    findings[scan_id] = build_mock_findings()
-    return ScanAccepted(
-        scan_id=scan_id,
-        status="completed",
-        status_url=f"/api/v1/scans/{scan_id}",
-    )
+@app.post(
+    "/api/v1/scans",
+    status_code=202,
+    response_model=ScanAccepted,
+    responses=DATABASE_ERROR_RESPONSES,
+)
+def submit_scan(
+    submission: ScanSubmission,
+    session: DatabaseSession,
+) -> ScanAccepted:
+    return repository.create_scan(session, submission)
 
 
 @app.get(
     "/api/v1/scans/{scan_id}",
     response_model=ScanRecord,
-    responses={404: {"model": ErrorResponse, "description": "Scan not found"}},
+    responses={
+        404: {"model": ErrorResponse, "description": "Scan not found"},
+        **DATABASE_ERROR_RESPONSES,
+    },
 )
-def get_scan(scan_id: UUID) -> ScanRecord:
-    scan = scans.get(scan_id)
+def get_scan(scan_id: UUID, session: DatabaseSession) -> ScanRecord:
+    scan = repository.get_scan(session, scan_id)
 
     if scan is None:
         raise HTTPException(status_code=404, detail="Scan not found")
@@ -53,43 +74,43 @@ def get_scan(scan_id: UUID) -> ScanRecord:
     return scan
 
 
-@app.get("/api/v1/scans", response_model=ScanHistory)
+@app.get(
+    "/api/v1/scans",
+    response_model=ScanHistory,
+    responses=DATABASE_ERROR_RESPONSES,
+)
 def list_scans(
+    session: DatabaseSession,
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> ScanHistory:
-    records = list(reversed(list(scans.values())))
-
-    return ScanHistory(
-        items=records[offset : offset + limit],
-        total=len(records),
-        limit=limit,
-        offset=offset,
-    )
+    return repository.get_scan_history(session, limit=limit, offset=offset)
 
 
 @app.get(
     "/api/v1/scans/{scan_id}/findings",
     response_model=FindingPage,
-    responses={404: {"model": ErrorResponse, "description": "Scan not found"}},
+    responses={
+        404: {"model": ErrorResponse, "description": "Scan not found"},
+        **DATABASE_ERROR_RESPONSES,
+    },
 )
 def list_findings(
     scan_id: UUID,
+    session: DatabaseSession,
     severity: Severity | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> FindingPage:
-    if scan_id not in scans:
-        raise HTTPException(status_code=404, detail="Scan not found")
-
-    records = findings[scan_id]
-
-    if severity is not None:
-        records = [item for item in records if item.severity == severity]
-
-    return FindingPage(
-        items=records[offset : offset + limit],
-        total=len(records),
+    page = repository.get_scan_findings(
+        session,
+        scan_id,
         limit=limit,
         offset=offset,
+        severity=severity,
     )
+
+    if page is None:
+        raise HTTPException(status_code=404, detail="Scan not found")
+
+    return page

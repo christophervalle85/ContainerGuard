@@ -12,6 +12,36 @@ jobs:
   checks:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    env:
+      DATABASE_URL: postgresql+psycopg://containerguard:containerguard_local@127.0.0.1:5433/containerguard
+      TEST_DATABASE_URL: postgresql+psycopg://containerguard_test:containerguard_test_local@127.0.0.1:5434/containerguard_test
+    services:
+      db:
+        image: postgres:17
+        env:
+          POSTGRES_DB: containerguard
+          POSTGRES_USER: containerguard
+          POSTGRES_PASSWORD: containerguard_local
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U containerguard -d containerguard"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      test-db:
+        image: postgres:17
+        env:
+          POSTGRES_DB: containerguard_test
+          POSTGRES_USER: containerguard_test
+          POSTGRES_PASSWORD: containerguard_test_local
+        ports:
+          - 5434:5432
+        options: >-
+          --health-cmd "pg_isready -U containerguard_test -d containerguard_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -35,6 +65,11 @@ jobs:
 
       - name: Check formatting
         run: uv run --locked ruff format --check .
+
+      - name: Apply database migrations
+        run: |
+          uv run --locked alembic upgrade head
+          DATABASE_URL="$TEST_DATABASE_URL" uv run --locked alembic upgrade head
 
       - name: Run tests
         run: uv run --locked pytest

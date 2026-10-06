@@ -1,24 +1,34 @@
 from collections.abc import Iterator
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import Engine, func, select
+from sqlalchemy.orm import Session
 
+from app.database import get_session
 from app.main import app
-from app.store import findings, scans
+from app.models import Finding, Scan
+from tests.database_support import isolated_repository_engine
 
 client = TestClient(app)
 
 
 @pytest.fixture(autouse=True)
-def reset_scan_store() -> Iterator[None]:
-    scans.clear()
-    findings.clear()
-    try:
-        yield
-    finally:
-        scans.clear()
-        findings.clear()
+def api_database() -> Iterator[Engine]:
+    with isolated_repository_engine() as engine:
+
+        def test_session() -> Iterator[Session]:
+            with Session(engine) as session:
+                yield session
+
+        previous_overrides = app.dependency_overrides.copy()
+        app.dependency_overrides[get_session] = test_session
+        try:
+            yield engine
+        finally:
+            app.dependency_overrides.clear()
+            app.dependency_overrides.update(previous_overrides)
 
 
 def test_submit_scan_returns_accepted_response() -> None:
@@ -70,13 +80,16 @@ def test_unknown_scan_returns_not_found() -> None:
     ],
     ids=["missing", "empty", "whitespace", "number", "too-long"],
 )
-def test_invalid_submission_does_not_create_scan(payload: dict) -> None:
-    existing_ids = set(scans)
+def test_invalid_submission_does_not_create_scan(
+    payload: dict, api_database: Engine
+) -> None:
 
     response = client.post("/api/v1/scans", json=payload)
 
     assert response.status_code == 422
-    assert set(scans) == existing_ids
+    with Session(api_database) as session:
+        assert session.scalar(select(func.count()).select_from(Scan)) == 0
+        assert session.scalar(select(func.count()).select_from(Finding)) == 0
 
 
 def test_scan_history_is_empty_initially() -> None:
@@ -261,3 +274,38 @@ def test_retrieval_contract_documents_not_found(path: str) -> None:
     error = contract["components"]["schemas"]["ErrorResponse"]
     assert error["properties"]["detail"]["type"] == "string"
     assert "detail" in error["required"]
+
+
+def test_api_submission_is_committed_to_postgresql(api_database: Engine) -> None:
+    response = client.post(
+        "/api/v1/scans", json={"image_reference": "demo/image:persisted"}
+    )
+    assert response.status_code == 202
+    scan_id = UUID(response.json()["scan_id"])
+    with Session(api_database) as session:
+        scan = session.get(Scan, scan_id)
+        assert scan is not None
+        assert scan.submitted_reference == "demo/image:persisted"
+        assert (
+            session.scalar(
+                select(func.count())
+                .select_from(Finding)
+                .where(Finding.scan_id == scan_id)
+            )
+            == 3
+        )
+
+
+def test_api_retrieves_a_scan_created_outside_the_api(api_database: Engine) -> None:
+    scan_id = uuid4()
+    with Session(api_database) as session, session.begin():
+        session.add(
+            Scan(id=scan_id, submitted_reference="demo/image:stored", status="failed")
+        )
+    response = client.get(f"/api/v1/scans/{scan_id}")
+    assert response.status_code == 200
+    assert response.json() == {
+        "scan_id": str(scan_id),
+        "image_reference": "demo/image:stored",
+        "status": "failed",
+    }
