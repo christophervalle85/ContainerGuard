@@ -18,6 +18,29 @@ services:
       retries: 10
       start_period: 10s
 
+  redis:
+    image: redis:8.2-alpine
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --save
+      - ""
+      - --maxmemory-policy
+      - noeviction
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6380}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
   test-db:
     image: postgres:17
     profiles: [test]
@@ -36,5 +59,28 @@ services:
       retries: 10
       start_period: 10s
 
+  test-redis:
+    image: redis:8.2-alpine
+    profiles: [test]
+    command:
+      - redis-server
+      - --appendonly
+      - "no"
+      - --save
+      - ""
+      - --maxmemory-policy
+      - noeviction
+    ports:
+      - "127.0.0.1:${TEST_REDIS_PORT:-6381}:6379"
+    tmpfs:
+      - /data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
 volumes:
   postgres_data:
+  redis_data:

@@ -15,6 +15,7 @@ from app.api.schemas import (
     ScanSubmission,
     Severity,
 )
+from app.jobs import submission as job_submission
 from app.persistence import repository
 from app.persistence.database import get_session
 
@@ -39,6 +40,16 @@ async def handle_database_error(
     )
 
 
+@app.exception_handler(job_submission.ScanQueueUnavailable)
+async def handle_queue_error(
+    request: Request, error: job_submission.ScanQueueUnavailable
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "Scan queue temporarily unavailable"},
+    )
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -48,13 +59,18 @@ def health() -> dict[str, str]:
     "/api/v1/scans",
     status_code=202,
     response_model=ScanAccepted,
-    responses=DATABASE_ERROR_RESPONSES,
+    responses={
+        503: {
+            "model": ErrorResponse,
+            "description": "Database or scan queue temporarily unavailable",
+        }
+    },
 )
 def submit_scan(
     submission: ScanSubmission,
     session: DatabaseSession,
 ) -> ScanAccepted:
-    return repository.create_scan(session, submission)
+    return job_submission.submit_scan(session, submission)
 
 
 @app.get(

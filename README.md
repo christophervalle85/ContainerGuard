@@ -7,13 +7,17 @@ ContainerGuard resolves public Docker Hub tags, scans their `linux/amd64` images
 with Trivy, and stores image identities, findings, scanner metadata, and outcomes
 in PostgreSQL. Saved results are available through the API and survive restarts.
 
-Real scans currently run through a synchronous development workflow. POST still
-creates fictional scans; background submission comes next. Findings responses
-use `mock: true` for those samples and `mock: false` for real scan attempts.
+Submitting an image queues a background scan through Redis and RQ. A separate
+worker runs Trivy while the API stays available. New findings responses use
+`mock: false`; older fictional records remain identifiable with `mock: true`.
 
 ## Run it locally
 
-You'll need Git, Docker with Compose, and [uv](https://docs.astral.sh/uv/getting-started/installation/).
+You'll need Git, Docker with Compose, [uv](https://docs.astral.sh/uv/getting-started/installation/),
+and [Trivy](https://trivy.dev/) installed on the machine running the worker.
+On macOS, install Trivy with `brew install trivy`. The local demonstrations used
+Trivy 0.75.0.
+
 The project uses Python 3.14. If you don't have it, uv can install it for you.
 
 ```bash
@@ -21,10 +25,21 @@ git clone https://github.com/christophervalle85/ContainerGuard.git
 cd ContainerGuard
 uv python install
 uv sync --locked
-docker compose --env-file .env.example up -d --wait db
+docker compose --env-file .env.example up -d --wait db redis
 uv run --env-file .env.example alembic upgrade head
 uv run --env-file .env.example uvicorn app.main:app --reload --host 127.0.0.1
 ```
+
+Keep the API running. In a second terminal, from the same project folder, start
+the worker:
+
+```bash
+uv run --env-file .env.example python -m app.jobs.worker
+```
+
+Keep this worker running so it can process new jobs and scheduled retries.
+Restart it after changing worker code. Use Ctrl+C to request a graceful stop;
+a job already in progress may finish before it exits.
 
 Open <http://127.0.0.1:8000/health>. You should get:
 
@@ -47,7 +62,9 @@ PostgreSQL uses port 5432 inside its container and port 5433 on your computer.
 The API runs on your computer, so DATABASE_URL uses port 5433. If that port is
 occupied, change both POSTGRES_PORT and the port in DATABASE_URL. The separate
 test database uses TEST_POSTGRES_PORT and TEST_DATABASE_URL, defaulting to 5434.
-Keep development and test database targets separate.
+Redis uses host port 6380 for development and 6381 for tests. Its container port
+is 6379. Change REDIS_PORT and REDIS_URL together if needed. Keep development
+and test services separate.
 
 If port 8000 is already in use, add `--port 8001` to the server command and use
 that port in the browser.
@@ -60,7 +77,7 @@ endpoint, click **Try it out**, fill in the request, and click **Execute**.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/health` | Check that the API responds |
-| POST | `/api/v1/scans` | Submit an image reference and create a mock scan |
+| POST | `/api/v1/scans` | Queue a real image scan |
 | GET | `/api/v1/scans` | Browse scan history, newest submissions first |
 | GET | `/api/v1/scans/{scan_id}` | Retrieve one scan |
 | GET | `/api/v1/scans/{scan_id}/findings` | Browse or filter saved findings |
@@ -71,15 +88,20 @@ Submit this JSON to `POST /api/v1/scans`:
 {"image_reference": "docker.io/library/alpine:3.20"}
 ```
 
-The API returns `202 Accepted` with a generated `scan_id`, `status`, and
-`status_url` after committing the scan and findings together. Copy the ID into
-the retrieval or findings endpoint. The mock finishes immediately, so its status
-is `completed`. Real development scans use `running`, `completed`, and `failed`;
-`queued` is reserved for worker integration.
+The API saves a queued attempt, submits its ID to Redis, and returns
+`202 Accepted` with `scan_id`, `status: queued`, and `status_url`. Copy the ID
+into the retrieval endpoint to follow its progress. A worker may already have
+started by the time you make that GET request.
 
-Each mock scan has three fictional findings: `MOCK-001` (CRITICAL), `MOCK-002`
-(HIGH), and `MOCK-003` (UNKNOWN). Findings responses include `mock: true`.
-The UNKNOWN example has no known fixed version and returns `fixed_version: null`.
+The usual sequence is `queued` → `running` → `completed` or `failed`. A retryable
+failure can return it to `queued` before another attempt. If no worker is running,
+the scan waits in the queue. The first scan can take longer while Trivy downloads
+its vulnerability database.
+
+Open the findings endpoint after completion. New scans return `mock: false`,
+including empty pages. Missing fixes appear as `fixed_version: null`. Try
+`docker.io/library/alpine:3.20.0` for the image that produced findings in our
+local demonstration; counts can change as the scanner database updates.
 
 History and findings accept `limit` (default 20, from 1 to 100) and `offset`
 (default 0, zero or greater). Both return `items`, `total`, `limit`, and `offset`.
@@ -94,20 +116,15 @@ GET /api/v1/scans/{scan_id}/findings?severity=HIGH&limit=20&offset=0
 
 The optional severity filter accepts `CRITICAL`, `HIGH`, `MEDIUM`, `LOW`, or
 `UNKNOWN`. Filtering happens before pagination, and `total` counts matching
-findings. Choosing LOW returns an empty list for mock scans; real scans may have
-LOW findings.
+findings. An empty filtered page can mean there are no findings at that severity.
+Check the scan status to distinguish a pending or failed attempt from a completed one.
 
-## Run a real scan
+## Direct scans for debugging
 
-Install [Trivy](https://trivy.dev/) on the machine running the workflow. On macOS:
-
-```bash
-brew install trivy
-trivy --version
-```
-
-The local demonstrations used Trivy 0.75.0. Start PostgreSQL and apply migrations
-with the setup commands above, then run this from the project folder:
+Normal submissions use the API and worker described above. This development
+command runs a scan directly, bypassing Redis and background retries. It is
+useful for inspecting the stored image identity and scanner metadata. Start
+PostgreSQL and apply migrations first, then run it from the project folder:
 
 ```bash
 uv run --env-file .env.example python - docker.io/library/alpine:3.20.0 <<'PY'
@@ -148,7 +165,7 @@ PY
 
 The first scan can take longer while Trivy downloads its vulnerability database.
 Submitted images are inspected remotely, without running them or accessing
-Docker's socket. Compose runs our database only.
+Docker's socket. Compose manages the local PostgreSQL and Redis services.
 
 Copy the printed scan ID into the GET endpoints in the API docs. Real findings
 return `mock: false`, even for empty pages. The scan endpoint shows the submitted
@@ -206,7 +223,12 @@ Invalid request fields, UUIDs, pagination values, and severity filters return
 
 Database operation failures return `503` with
 `{"detail": "Database temporarily unavailable"}`. Responses exclude raw SQL and
-connection details. A failed submission rolls back its scan and findings.
+connection details. A failed database write rolls back its transaction. Redis submission failures
+return `503` with `{"detail": "Scan queue temporarily unavailable"}`. If PostgreSQL
+is reachable, that queued attempt is marked failed with `enqueue_failed`.
+
+A scan accepted with 202 can still fail later in the worker. Read its status and
+safe `error_details`; acceptance does not mean the image has been scanned.
 
 ### Saved history and restarts
 
@@ -234,20 +256,79 @@ docker compose --env-file .env.example --profile test down
 docker compose --env-file .env.example --profile test down --volumes
 ```
 
-After a reset, start the databases and apply migrations again. The test database
+After a reset, start PostgreSQL and Redis and apply migrations again. The test database
 uses temporary storage and loses its contents when its container stops.
 
 The health endpoint checks only that the API process responds. It does not check
-PostgreSQL or a scanner, so it can return 200 while scan routes return 503.
-The mock returns the same fictional findings for every submitted image. It does
-not invent a resolved image digest or real scanner metadata.
+PostgreSQL, Redis, or a worker, so it can return 200 while submissions fail or
+scans wait in the queue.
+
+## Queue storage and retries
+
+A local Redis service is available in Compose. Start it and check its connection:
+
+```bash
+docker compose --env-file .env.example up -d --wait redis
+docker compose --env-file .env.example exec redis redis-cli ping
+```
+
+The connection check should return `PONG`. Redis listens on localhost port 6380
+on the host and port 6379 inside its container. Set REDIS_PORT and the port in
+REDIS_URL together if you need a different host port.
+
+Redis keeps its active data in memory and writes an append-only log to the
+`redis_data` named volume, with disk synchronization every second. Restarting or
+recreating the container keeps that volume. `down --volumes` removes both Redis
+queue data and PostgreSQL scan history. PostgreSQL remains the source of saved
+scan results.
+
+The worker allows two retries after the first attempt, with delays of 5 and
+15 seconds. Temporary registry unavailability, rate limits, and scanner timeouts
+qualify. Invalid references, malformed reports, and other classified permanent
+failures are saved as failed without repeating the scan.
+
+The worker runs RQ's scheduler for delayed retries. Its optional `--burst` mode
+exits when the queue is empty and does not wait for future retries; use the
+normal long-running command for the application.
+
+PostgreSQL and Redis do not share a transaction. A crash between their writes can
+leave a queued scan without a job, and an interrupted worker can leave a running
+scan. Redis's once-per-second disk synchronization can also lose recent queue
+writes during a hard crash. There is no automatic reconciliation yet.
+
+### Recover an interrupted scan
+
+Stop **all** scan workers and confirm their job children and scanner subprocesses
+have stopped. Keep them stopped throughout recovery, and run one recovery
+command at a time. Inspect the scan ID first: recovery accepts only queued or
+running Trivy attempts with no saved image or findings.
+
+```bash
+uv run --env-file .env.example python -m app.jobs.recovery SCAN_UUID --workers-stopped
+```
+
+Replace SCAN_UUID with the existing ID. The command resets the attempt to queued,
+removes a matching old RQ job and its execution metadata, and submits a new job
+with the same ID and a fresh retry budget. Then restart the worker and
+retrieve that same ID through the API. Completed and failed scans are refused.
+
+Recovery also refuses while Redis still lists a scan worker. A crashed worker
+can leave a registration until it expires; absence of a registration does not
+prove its processes have stopped. If recovery loses contact with a service,
+inspect the scan and rerun the command with workers still stopped.
+
+We verified a submission waiting while the worker was stopped, then completing
+with real findings after restart. We also recovered a deliberately created
+running record with no active scanner. That second exercise simulated an
+interruption; it did not kill a live scan. See the
+[background job notes](docs/architecture/jobs.md) for failure windows and guards.
 
 ## Run the checks
 
 From the project folder:
 
 ```bash
-docker compose --env-file .env.example --profile test up -d --wait test-db
+docker compose --env-file .env.example --profile test up -d --wait test-db test-redis
 uv run --locked --env-file .env.example pytest
 uv run --locked ruff check .
 uv run --locked ruff format --check .
@@ -256,19 +337,22 @@ uv run --locked ruff format --check .
 Tests cover the API, registry responses, bounded subprocesses, Trivy parsing,
 optional database metadata, migrations, transactional writes, and safe failures.
 Routine checks use fixtures and local stand-in executables; they do not need
-Trivy installed or public registry access. They require TEST_DATABASE_URL
-to point to containerguard_test and reject a target matching development before
-cleanup. Test configuration rejects URL query options that could override the
+Trivy installed or public registry access. TEST_REDIS_URL must point to a
+dedicated Redis test service. TEST_DATABASE_URL must point to containerguard_test;
+the harness rejects a target matching development before cleanup. Test configuration rejects URL query options that could override the
 validated target and confirms the connected database name before schema changes.
 Tests create disposable schemas inside that database, apply migrations,
 and override API sessions to use the isolated storage. They do not clear your
 development history. Some tests use real commits and new sessions to verify data.
-No separate test migration command is needed locally.
+Redis tests use disposable queue names and remove only their own jobs; they
+never flush the Redis database. Test configuration rejects using the development
+Redis server, even with a different logical database number. No separate test
+migration command is needed locally.
 
 To apply formatting changes, run `uv run ruff format .`, then repeat the checks.
 
-GitHub Actions is configured to start separate PostgreSQL services, apply
-migrations, and run the checks on pushes to `main` and on pull requests.
+GitHub Actions starts separate PostgreSQL services and test Redis, applies
+migrations, and runs the checks on pushes to `main` and on pull requests.
 In an earlier CI exercise, I deliberately changed the health response on a test
 branch, watched the pull request's test fail, and restored the response to get a passing run.
 That exercise is recorded in [PR #1](https://github.com/christophervalle85/ContainerGuard/pull/1).
@@ -283,22 +367,24 @@ That exercise is recorded in [PR #1](https://github.com/christophervalle85/Conta
 - `app/registries/`: Docker Hub requests and image digest resolution.
 - `app/scanning/trivy/`: Trivy execution, output limits, and report parsing.
 - `app/scanning/workflow.py`: coordinates real scans and saves their outcomes.
+- `app/jobs/`: Redis connections, submission, worker entry point, and manual recovery.
 - `migrations/` and `alembic.ini`: database schema migrations.
-- `compose.yaml`: development and test PostgreSQL services.
+- `compose.yaml`: development and test PostgreSQL and Redis services.
 - `docs/architecture/persistence.md`: storage design and decisions.
 - `docs/architecture/scanning.md`: scanning decisions, current limits, and live test notes.
-- `app/scanning/mock_scanner.py`: fictional findings for the API demonstration.
-- `tests/`: API and PostgreSQL integration tests.
+- `docs/architecture/jobs.md`: queue lifecycle, retries, and recovery decisions.
+- `app/scanning/mock_scanner.py`: fictional findings retained for legacy records and tests.
+- `tests/`: unit tests and isolated PostgreSQL/Redis integration tests.
 - `pyproject.toml`: dependencies and settings for pytest and Ruff.
 - `uv.lock`: exact dependency versions used to recreate the environment.
 - `.python-version`: the project's Python version.
 - `.github/workflows/ci.yml`: the automated GitHub checks.
-- `.env.example`: local demonstration database configuration.
+- `.env.example`: local demonstration database and queue configuration.
 
 Commit the lockfile. Keep `.venv`, caches, and real credentials out of Git.
 uv recreates the local environment from the committed dependency files.
 
 ## Next steps
 
-Connect submission to Redis and an RQ worker so HTTP requests can return while
-scanning happens in the background. Policy evaluation and a dashboard follow.
+Background scanning is in place. Container packaging, policy evaluation, and
+a dashboard are still ahead.

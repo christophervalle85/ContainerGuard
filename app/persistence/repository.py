@@ -159,6 +159,43 @@ def get_scan_findings(
     )
 
 
+def create_queued_trivy_scan(session: Session, submission: ScanSubmission) -> UUID:
+    scan_id = uuid4()
+
+    scan = Scan(
+        id=scan_id,
+        submitted_reference=submission.image_reference,
+        status="queued",
+        created_at=datetime.now(UTC),
+        scanner_name="trivy",
+    )
+
+    with session.begin():
+        session.add(scan)
+
+    return scan_id
+
+
+def claim_queued_trivy_scan(session: Session, scan_id: UUID) -> ScanSubmission | None:
+    with session.begin():
+        scan = session.scalar(select(Scan).where(Scan.id == scan_id).with_for_update())
+
+        if scan is None:
+            raise ValueError("Scan does not exist")
+
+        if scan.scanner_name != "trivy":
+            raise ValueError("Scan is not a Trivy scan")
+
+        if scan.status != "queued":
+            return None
+
+        submission = ScanSubmission(image_reference=scan.submitted_reference)
+        scan.status = "running"
+        scan.started_at = datetime.now(UTC)
+
+    return submission
+
+
 def start_trivy_scan(session: Session, submission: ScanSubmission) -> UUID:
     now = datetime.now(UTC)
     scan_id = uuid4()
@@ -276,3 +313,79 @@ def fail_trivy_scan(
         scan.error_details = f"{error_code}: {message}"
         scan.completed_at = datetime.now(UTC)
         scan.status = "failed"
+
+
+def fail_queued_scan(session: Session, scan_id: UUID) -> None:
+    with session.begin():
+        scan = session.scalar(
+            select(Scan)
+            .where(Scan.id == scan_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if scan is None:
+            raise ValueError("Scan does not exist")
+        if scan.status != "queued":
+            return
+        if scan.scanner_name != "trivy":
+            raise ValueError("Scan is not a Trivy scan")
+        scan.status = "failed"
+        scan.completed_at = datetime.now(UTC)
+        scan.error_details = (
+            "enqueue_failed: Scan could not be submitted to the worker queue"
+        )
+
+
+def requeue_trivy_scan(session: Session, scan_id: UUID, error_code: str) -> None:
+    message = SCAN_FAILURE_MESSAGES.get(error_code)
+    if message is None:
+        raise ValueError("Unknown scan error code")
+
+    with session.begin():
+        scan = session.scalar(
+            select(Scan)
+            .where(Scan.id == scan_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+
+        if scan is None or scan.status != "running" or scan.scanner_name != "trivy":
+            raise ValueError("Expected a running Trivy scan")
+
+        scan.status = "queued"
+        scan.started_at = None
+        scan.completed_at = None
+        scan.error_details = f"{error_code}: {message}"
+
+
+def prepare_scan_recovery(
+    session: Session, scan_id: UUID, *, workers_stopped: bool = False
+) -> None:
+    if not workers_stopped:
+        raise ValueError("Stop all scan workers before recovery")
+
+    with session.begin():
+        scan = session.scalar(
+            select(Scan)
+            .where(Scan.id == scan_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+
+        if (
+            scan is None
+            or scan.status not in {"queued", "running"}
+            or scan.scanner_name != "trivy"
+        ):
+            raise ValueError("Expected a queued or running Trivy scan")
+
+        finding_count = session.scalar(
+            select(func.count()).select_from(Finding).where(Finding.scan_id == scan_id)
+        )
+        if scan.image_id is not None or finding_count:
+            raise ValueError("Scan already has saved results")
+
+        scan.status = "queued"
+        scan.started_at = None
+        scan.completed_at = None
+        scan.error_details = "recovery_requested: Scan was manually prepared for retry"

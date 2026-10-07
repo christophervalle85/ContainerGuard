@@ -76,7 +76,12 @@ def _get_bytes(opener, request: Request, timeout: float, limit: int) -> bytes:
             403: "access_denied",
             404: "not_found",
             429: "rate_limited",
-        }.get(error.code, "unavailable")
+        }.get(
+            error.code,
+            "unavailable"
+            if error.code == 408 or 500 <= error.code < 600
+            else "invalid_response",
+        )
         error.close()
         raise RegistryRequestError(code) from None
     except URLError, OSError, HTTPException:
