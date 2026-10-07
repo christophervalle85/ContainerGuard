@@ -5,8 +5,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from app.database import get_session
 from app.main import app
+from app.persistence.database import get_session
 
 SCAN_PATH = "/api/v1/scans/00000000-0000-0000-0000-000000000000"
 

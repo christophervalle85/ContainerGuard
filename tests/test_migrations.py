@@ -6,7 +6,7 @@ from alembic.config import Config
 from alembic.migration import MigrationContext
 from sqlalchemy import inspect
 
-from app.models import Base
+from app.persistence.models import Base
 from tests.database_support import isolated_model_connection
 
 

@@ -6,9 +6,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app import repository
-from app.database import get_session
-from app.schemas import (
+from app.api.schemas import (
     ErrorResponse,
     FindingPage,
     ScanAccepted,
@@ -17,6 +15,8 @@ from app.schemas import (
     ScanSubmission,
     Severity,
 )
+from app.persistence import repository
+from app.persistence.database import get_session
 
 app = FastAPI(title="ContainerGuard")
 

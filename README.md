@@ -3,13 +3,13 @@
 I'm building ContainerGuard to learn how a container security tool fits together,
 from accepting an image reference to explaining whether its findings meet a policy.
 
-Right now, the API accepts an image reference, creates a mock scan, and lets you
-retrieve its record, browse scan history, and filter fictional findings. Scans
-and findings are saved in PostgreSQL and survive service restarts. Tests
-and GitHub Actions check the API behavior, linting, and formatting.
+ContainerGuard resolves public Docker Hub tags, scans their `linux/amd64` images
+with Trivy, and stores image identities, findings, scanner metadata, and outcomes
+in PostgreSQL. Saved results are available through the API and survive restarts.
 
-The findings are sample data. ContainerGuard does not contact a registry, pull
-an image, or run a vulnerability scanner yet.
+Real scans currently run through a synchronous development workflow. POST still
+creates fictional scans; background submission comes next. Findings responses
+use `mock: true` for those samples and `mock: false` for real scan attempts.
 
 ## Run it locally
 
@@ -63,7 +63,7 @@ endpoint, click **Try it out**, fill in the request, and click **Execute**.
 | POST | `/api/v1/scans` | Submit an image reference and create a mock scan |
 | GET | `/api/v1/scans` | Browse scan history, newest submissions first |
 | GET | `/api/v1/scans/{scan_id}` | Retrieve one scan |
-| GET | `/api/v1/scans/{scan_id}/findings` | Browse or filter its fictional findings |
+| GET | `/api/v1/scans/{scan_id}/findings` | Browse or filter saved findings |
 
 Submit this JSON to `POST /api/v1/scans`:
 
@@ -73,8 +73,9 @@ Submit this JSON to `POST /api/v1/scans`:
 
 The API returns `202 Accepted` with a generated `scan_id`, `status`, and
 `status_url` after committing the scan and findings together. Copy the ID into
-the retrieval or findings endpoint. The mock finishes immediately, so its status is `completed`. The contract also defines
-`queued`, `running`, and `failed` for later scanner and worker integration.
+the retrieval or findings endpoint. The mock finishes immediately, so its status
+is `completed`. Real development scans use `running`, `completed`, and `failed`;
+`queued` is reserved for worker integration.
 
 Each mock scan has three fictional findings: `MOCK-001` (CRITICAL), `MOCK-002`
 (HIGH), and `MOCK-003` (UNKNOWN). Findings responses include `mock: true`.
@@ -93,11 +94,109 @@ GET /api/v1/scans/{scan_id}/findings?severity=HIGH&limit=20&offset=0
 
 The optional severity filter accepts `CRITICAL`, `HIGH`, `MEDIUM`, `LOW`, or
 `UNKNOWN`. Filtering happens before pagination, and `total` counts matching
-findings. Choosing LOW returns an empty list for the current sample data.
+findings. Choosing LOW returns an empty list for mock scans; real scans may have
+LOW findings.
 
-### Validation and errors
+## Run a real scan
 
-Image references must be strings with 1–512 characters after trimming surrounding
+Install [Trivy](https://trivy.dev/) on the machine running the workflow. On macOS:
+
+```bash
+brew install trivy
+trivy --version
+```
+
+The local demonstrations used Trivy 0.75.0. Start PostgreSQL and apply migrations
+with the setup commands above, then run this from the project folder:
+
+```bash
+uv run --env-file .env.example python - docker.io/library/alpine:3.20.0 <<'PY'
+import json
+import sys
+
+from sqlalchemy.orm import Session
+
+from app.api.schemas import ScanSubmission
+from app.persistence.database import get_engine
+from app.persistence.models import Image, Scan
+from app.persistence.repository import get_scan_findings
+from app.scanning.workflow import perform_trivy_scan
+
+engine = get_engine()
+with Session(engine) as session:
+    scan_id = perform_trivy_scan(
+        session, ScanSubmission(image_reference=sys.argv[1])
+    )
+
+with Session(engine) as session:
+    scan = session.get(Scan, scan_id)
+    image = session.get(Image, scan.image_id) if scan.image_id else None
+    page = get_scan_findings(session, scan_id, limit=5, offset=0)
+    print("Scan ID:", scan_id)
+    print("Status:", scan.status)
+    print("Digest:", image.digest if image else None)
+    print("Platform:", image.platform if image else None)
+    print("Trivy version:", scan.scanner_version)
+    print("Database metadata:", json.dumps(scan.scanner_database_metadata))
+    print("Findings:", page.total)
+    print("Error:", scan.error_details)
+    for finding in page.items:
+        print(finding.vulnerability_id, finding.package_name, finding.severity.value)
+    raise SystemExit(1 if scan.status == "failed" else 0)
+PY
+```
+
+The first scan can take longer while Trivy downloads its vulnerability database.
+Submitted images are inspected remotely, without running them or accessing
+Docker's socket. Compose runs our database only.
+
+Copy the printed scan ID into the GET endpoints in the API docs. Real findings
+return `mock: false`, even for empty pages. The scan endpoint shows the submitted
+reference and status; the command also prints stored identity, metadata, and errors.
+
+For a missing-image demonstration, rerun the command with an intentionally absent
+tag such as `docker.io/library/alpine:containerguard-missing-example`. Expect a
+saved `failed` attempt, a safe `resolution_failed` message, no image association,
+and exit code 1. This differs from a completed scan with zero findings.
+
+### Current scanner limits
+
+The workflow accepts explicit public Docker Hub tags and selects one unambiguous
+`linux/amd64` image from an OCI index or Docker manifest list. Private registries,
+GHCR resolution, direct single-image manifests, nested indexes, and explicit CPU
+variants are not supported. The low-level runner accepts pinned Docker Hub and
+GHCR references; the full workflow currently resolves Docker Hub tags only.
+
+Scanner execution defaults to five minutes, 10 MiB of JSON output, and 64 KiB of
+diagnostic output. Direct runner callers can change its timeout and output limit.
+Registry operations use timeouts and bounded responses. Raw diagnostic text is
+not saved as failure details.
+
+Database metadata is an optional snapshot of Trivy's local cache after scanning:
+its format version and available update/download timestamps. Missing or unusable
+metadata stays null. It is not an immutable database identifier, particularly if
+another process changes the shared cache. Zero findings is not proof of security;
+unsupported distributions can have incomplete vulnerability coverage.
+
+### Verified demonstrations
+
+Local scans with Trivy 0.75.0 and `linux/amd64` produced these results:
+
+| Case | Observed result | Manifest digest |
+| --- | --- | --- |
+| `alpine:3.20` | Completed with zero findings; retrieved through the API | `sha256:c64c687cbea9300178b30c95835354e34c4e4febc4badfe27102879de0483b5e` |
+| `alpine:3.20.0` | Completed with 70 persisted findings | `sha256:216266c86fc4dcef5619930bd394245824c2af52fd21ba7c6fa0e618657d4c3b` |
+| Randomly generated absent Alpine tag | Saved failure with `resolution_failed` | No resolved image |
+
+The zero-finding case was checked on October 6, 2026. Findings, failure, and
+persisted database metadata were checked on October 7, 2026. Alpine 3.20 also
+produced an end-of-support warning. Counts may change as scanner databases update;
+routine tests use fixtures rather than asserting live counts. The
+[scanning notes](docs/architecture/scanning.md) explain the storage decisions.
+
+## API validation and errors
+
+For POST, image references must be strings with 1–512 characters after trimming surrounding
 whitespace. This is basic input validation; it does not yet validate the full
 container reference syntax or check that an image exists.
 
@@ -154,8 +253,10 @@ uv run --locked ruff check .
 uv run --locked ruff format --check .
 ```
 
-Tests cover the API contract, database relationships and constraints, migrations,
-atomic writes, pagination, and safe database errors. They require TEST_DATABASE_URL
+Tests cover the API, registry responses, bounded subprocesses, Trivy parsing,
+optional database metadata, migrations, transactional writes, and safe failures.
+Routine checks use fixtures and local stand-in executables; they do not need
+Trivy installed or public registry access. They require TEST_DATABASE_URL
 to point to containerguard_test and reject a target matching development before
 cleanup. Test configuration rejects URL query options that could override the
 validated target and confirms the connected database name before schema changes.
@@ -175,14 +276,18 @@ That exercise is recorded in [PR #1](https://github.com/christophervalle85/Conta
 ## Where things live
 
 - `app/main.py`: the FastAPI application and API routes.
-- `app/schemas.py`: request and response models, scan states, and severities.
-- `app/database.py`: database engine and request session lifecycle.
-- `app/models.py`: Image, Scan, and Finding database models.
-- `app/repository.py`: database writes, reads, filtering, and pagination.
+- `app/api/schemas.py`: request and response models, scan states, and severities.
+- `app/persistence/database.py`: database engine and request session lifecycle.
+- `app/persistence/models.py`: Image, Scan, and Finding database models.
+- `app/persistence/repository.py`: database writes, reads, filtering, and pagination.
+- `app/registries/`: Docker Hub requests and image digest resolution.
+- `app/scanning/trivy/`: Trivy execution, output limits, and report parsing.
+- `app/scanning/workflow.py`: coordinates real scans and saves their outcomes.
 - `migrations/` and `alembic.ini`: database schema migrations.
 - `compose.yaml`: development and test PostgreSQL services.
 - `docs/architecture/persistence.md`: storage design and decisions.
-- `app/mock_scanner.py`: fictional findings for the API demonstration.
+- `docs/architecture/scanning.md`: scanning decisions, current limits, and live test notes.
+- `app/scanning/mock_scanner.py`: fictional findings for the API demonstration.
 - `tests/`: API and PostgreSQL integration tests.
 - `pyproject.toml`: dependencies and settings for pytest and Ruff.
 - `uv.lock`: exact dependency versions used to recreate the environment.
@@ -195,6 +300,5 @@ uv recreates the local environment from the committed dependency files.
 
 ## Next steps
 
-Replace fictional findings with real Trivy results, record the resolved image
-digest and platform, and store scanner metadata and meaningful scan failures.
-Background jobs and a dashboard follow later.
+Connect submission to Redis and an RQ worker so HTTP requests can return while
+scanning happens in the background. Policy evaluation and a dashboard follow.

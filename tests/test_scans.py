@@ -6,9 +6,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
-from app.database import get_session
 from app.main import app
-from app.models import Finding, Scan
+from app.persistence.database import get_session
+from app.persistence.models import Finding, Scan
 from tests.database_support import isolated_repository_engine
 
 client = TestClient(app)
@@ -309,3 +309,76 @@ def test_api_retrieves_a_scan_created_outside_the_api(api_database: Engine) -> N
         "image_reference": "demo/image:stored",
         "status": "failed",
     }
+
+
+@pytest.mark.parametrize("status", ["running", "completed", "failed"])
+def test_empty_real_scan_findings_are_not_labelled_mock(
+    api_database: Engine, status: str
+) -> None:
+    scan_id = uuid4()
+    with Session(api_database) as session, session.begin():
+        session.add(
+            Scan(
+                id=scan_id,
+                submitted_reference="docker.io/library/alpine:3.20",
+                status=status,
+                scanner_name="trivy",
+            )
+        )
+    response = client.get(f"/api/v1/scans/{scan_id}/findings")
+    assert response.status_code == 200
+    assert response.json() == {
+        "items": [],
+        "total": 0,
+        "limit": 20,
+        "offset": 0,
+        "mock": False,
+    }
+
+
+def test_real_saved_findings_and_empty_filtered_pages_are_not_mock(
+    api_database: Engine,
+) -> None:
+    from pathlib import Path
+
+    from app.api.schemas import ScanSubmission
+    from app.persistence import repository
+    from app.scanning.trivy.parser import (
+        ParsedScanMetadata,
+        load_trivy_report,
+        parse_trivy_findings,
+    )
+
+    digest = "sha256:" + "a" * 64
+    pinned = f"docker.io/library/alpine@{digest}"
+    fixture = Path(__file__).parent / "fixtures" / "trivy" / "findings.json"
+    findings = parse_trivy_findings(load_trivy_report(fixture.read_text()))
+    metadata = ParsedScanMetadata(pinned, digest, "linux/amd64", "0.75.0")
+    with Session(api_database) as session:
+        scan_id = repository.start_trivy_scan(
+            session, ScanSubmission(image_reference="docker.io/library/alpine:3.20")
+        )
+        repository.complete_trivy_scan(session, scan_id, pinned, metadata, findings)
+    url = f"/api/v1/scans/{scan_id}/findings"
+    response = client.get(url)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["mock"] is False
+    assert body["total"] == 3
+    assert body["items"][0]["package_name"] == "demo-library-a"
+    assert body["items"][0]["severity"] == "CRITICAL"
+    assert body["items"][2]["fixed_version"] is None
+    for params in ({"severity": "LOW"}, {"offset": 100}):
+        empty = client.get(url, params=params)
+        assert empty.status_code == 200
+        assert empty.json()["items"] == []
+        assert empty.json()["mock"] is False
+
+
+def test_openapi_allows_both_values_for_findings_mock_flag() -> None:
+    response = client.get("/openapi.json")
+    assert response.status_code == 200
+    flag = response.json()["components"]["schemas"]["FindingPage"]["properties"]["mock"]
+    assert flag["type"] == "boolean"
+    assert "const" not in flag
+    assert "enum" not in flag

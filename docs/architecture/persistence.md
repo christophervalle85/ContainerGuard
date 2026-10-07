@@ -1,12 +1,12 @@
 # Persistence architecture
 
-Status: implemented locally; remote CI verification is pending.
+Status: implemented. Real scan integration is described in [image scanning](scanning.md).
 
 ## Scope
 
 Replace process-local dictionaries with durable scan history while preserving
-the existing API response shapes. Scanning continues to use explicitly fictional
-findings until registry resolution and Trivy integration are implemented.
+the existing API response shapes. POST still creates explicitly fictional
+findings. The synchronous real scan workflow uses this storage; see [image scanning](scanning.md).
 
 ## Architecture
 
@@ -70,7 +70,8 @@ documented 404. Invalid inputs still return 422. Database failures return a safe
 OpenAPI and test that failed writes are not accepted.
 
 Use explicit conversion from database records to existing response models.
-Continue exposing mock: true while findings come from the mock scanner.
+Expose mock: true for mock scans and mock: false for Trivy attempts, including
+empty finding pages.
 Routes use the repository directly; no process-local scan store remains.
 
 ## Configuration and local development
@@ -117,6 +118,6 @@ is needed. The health-only endpoint remains a process liveness check.
 
 ## Deferred work
 
-Digest resolution, real scanner execution, background workers, full backend
-containerization, accounts, policies, the dashboard, and cloud deployment are
-outside the persistence implementation.
+Background workers, full backend containerization, accounts, policies, the
+dashboard, and cloud deployment remain future work. Digest resolution and real
+scanner execution are covered in [image scanning](scanning.md).

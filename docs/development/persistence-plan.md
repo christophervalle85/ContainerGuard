@@ -41,7 +41,7 @@ Files: `compose.yaml`, `.env.example`, `README.md`.
 
 ## 2. Connection and safe test setup
 
-Files: `app/database.py`, `tests/database_support.py`,
+Files: `app/persistence/database.py`, `tests/database_support.py`,
 `tests/test_database_config.py`, `tests/test_database_connection.py`,
 `pyproject.toml`, `uv.lock`, `compose.yaml`.
 
@@ -53,7 +53,7 @@ Files: `app/database.py`, `tests/database_support.py`,
 
 ## 3. Schema and migrations
 
-Files: `app/models.py`, `alembic.ini`, `migrations/env.py`,
+Files: `app/persistence/models.py`, `alembic.ini`, `migrations/env.py`,
 `migrations/versions/0001_initial_schema.py`, `tests/test_models.py`.
 
 - [x] Write failing integration tests for the three table relationships,
@@ -66,7 +66,7 @@ Files: `app/models.py`, `alembic.ini`, `migrations/env.py`,
 
 ## 4. Persistent API
 
-Files: `app/repository.py`, `app/main.py`, `app/schemas.py`, `tests/test_scans.py`.
+Files: `app/persistence/repository.py`, `app/main.py`, `app/api/schemas.py`, `tests/test_scans.py`.
 
 - [x] Replace test dictionary cleanup with the isolated database fixture.
 - [x] Write failing tests for atomic writes and safe database failure responses.
