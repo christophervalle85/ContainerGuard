@@ -1,4 +1,4 @@
-from app.schemas import Finding, Severity
+from app.api.schemas import Finding, Severity
 
 
 def build_mock_findings() -> list[Finding]:

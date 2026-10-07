@@ -14,7 +14,7 @@ def test_session_connects_to_test_database_and_releases_connection(
         os.environ.get("TEST_DATABASE_URL"), os.environ.get("DATABASE_URL")
     )
     monkeypatch.setenv("DATABASE_URL", test_url)
-    database = import_module("app.database")
+    database = import_module("app.persistence.database")
     database.get_engine.cache_clear()
     engine = database.get_engine()
     sessions = database.get_session()

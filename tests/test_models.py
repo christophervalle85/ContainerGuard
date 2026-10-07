@@ -19,7 +19,7 @@ IMAGE_IDENTITY = {
 
 
 def test_image_identity_survives_a_new_session() -> None:
-    models = import_module("app.models")
+    models = import_module("app.persistence.models")
     with isolated_model_connection() as connection:
         models.Base.metadata.create_all(connection)
         with Session(connection, join_transaction_mode="create_savepoint") as session:
@@ -38,7 +38,7 @@ def test_image_identity_survives_a_new_session() -> None:
 
 
 def test_duplicate_image_identity_is_rejected() -> None:
-    models = import_module("app.models")
+    models = import_module("app.persistence.models")
     with isolated_model_connection() as connection:
         models.Base.metadata.create_all(connection)
         with Session(connection, join_transaction_mode="create_savepoint") as session:
@@ -50,7 +50,7 @@ def test_duplicate_image_identity_is_rejected() -> None:
 
 
 def test_same_digest_can_have_a_different_platform() -> None:
-    models = import_module("app.models")
+    models = import_module("app.persistence.models")
     with isolated_model_connection() as connection:
         models.Base.metadata.create_all(connection)
         with Session(connection, join_transaction_mode="create_savepoint") as session:
@@ -62,7 +62,7 @@ def test_same_digest_can_have_a_different_platform() -> None:
 
 
 def test_failed_unresolved_scan_can_be_stored_without_image() -> None:
-    models = import_module("app.models")
+    models = import_module("app.persistence.models")
     scan_class = models.Scan
     with isolated_model_connection() as connection:
         models.Base.metadata.create_all(connection)
@@ -97,7 +97,7 @@ def test_failed_unresolved_scan_can_be_stored_without_image() -> None:
 
 
 def test_scan_can_reference_an_existing_image() -> None:
-    models = import_module("app.models")
+    models = import_module("app.persistence.models")
     scan_class = models.Scan
     with isolated_model_connection() as connection:
         models.Base.metadata.create_all(connection)
@@ -120,7 +120,7 @@ def test_scan_can_reference_an_existing_image() -> None:
 
 
 def test_scan_rejects_nonexistent_image_id() -> None:
-    models = import_module("app.models")
+    models = import_module("app.persistence.models")
     scan_class = models.Scan
     with isolated_model_connection() as connection:
         models.Base.metadata.create_all(connection)
@@ -136,7 +136,7 @@ def test_scan_rejects_nonexistent_image_id() -> None:
 
 
 def test_scan_rejects_invalid_status() -> None:
-    models = import_module("app.models")
+    models = import_module("app.persistence.models")
     scan_class = models.Scan
     with isolated_model_connection() as connection:
         models.Base.metadata.create_all(connection)
@@ -166,7 +166,7 @@ FINDING_DATA = {
 
 @pytest.fixture
 def finding_session() -> Iterator[tuple[ModuleType, Session, object]]:
-    models = import_module("app.models")
+    models = import_module("app.persistence.models")
     assert hasattr(models, "Finding"), "The Finding model has not been implemented"
     with isolated_model_connection() as connection:
         models.Base.metadata.create_all(connection)

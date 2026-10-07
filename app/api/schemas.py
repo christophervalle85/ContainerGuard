@@ -1,5 +1,4 @@
 from enum import StrEnum
-from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -59,7 +58,7 @@ class FindingPage(BaseModel):
     total: int
     limit: int
     offset: int
-    mock: Literal[True] = True
+    mock: bool
 
 
 class ErrorResponse(BaseModel):

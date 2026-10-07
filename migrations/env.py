@@ -2,8 +2,8 @@ import os
 
 from alembic import context
 
-from app.database import get_engine
-from app.models import Base
+from app.persistence.database import get_engine
+from app.persistence.models import Base
 
 config = context.config
 

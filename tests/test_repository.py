@@ -7,13 +7,13 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models import Finding, Image, Scan
-from app.schemas import ScanSubmission, Severity
+from app.api.schemas import ScanSubmission, Severity
+from app.persistence.models import Finding, Image, Scan
 from tests.database_support import isolated_repository_engine
 
 
 def test_submission_commits_scan_and_findings_for_another_connection() -> None:
-    repository = import_module("app.repository")
+    repository = import_module("app.persistence.repository")
     with isolated_repository_engine() as engine:
         with Session(engine) as session:
             accepted = repository.create_scan(
@@ -45,7 +45,7 @@ def test_submission_commits_scan_and_findings_for_another_connection() -> None:
 
 
 def test_finding_write_failure_rolls_back_entire_submission(monkeypatch) -> None:
-    repository = import_module("app.repository")
+    repository = import_module("app.persistence.repository")
     original = repository.build_mock_findings
     sample = original()[0]
     monkeypatch.setattr(repository, "build_mock_findings", lambda: [sample, sample])
@@ -63,7 +63,7 @@ def test_finding_write_failure_rolls_back_entire_submission(monkeypatch) -> None
 
 
 def test_get_scan_returns_requested_record_from_a_new_session() -> None:
-    repository = import_module("app.repository")
+    repository = import_module("app.persistence.repository")
     with isolated_repository_engine() as engine:
         with Session(engine) as session:
             accepted = repository.create_scan(
@@ -83,7 +83,7 @@ def test_get_scan_returns_requested_record_from_a_new_session() -> None:
 
 
 def test_get_scan_returns_none_for_an_unknown_id() -> None:
-    repository = import_module("app.repository")
+    repository = import_module("app.persistence.repository")
     with isolated_repository_engine() as engine:
         with Session(engine) as session:
             repository.create_scan(
@@ -105,7 +105,7 @@ def test_get_scan_returns_none_for_an_unknown_id() -> None:
 def test_scan_history_orders_and_paginates_saved_records(
     limit: int, offset: int, expected_ids: list[int]
 ) -> None:
-    repository = import_module("app.repository")
+    repository = import_module("app.persistence.repository")
     with isolated_repository_engine() as engine:
         with Session(engine) as session, session.begin():
             session.add_all(
@@ -134,7 +134,7 @@ def test_scan_history_orders_and_paginates_saved_records(
 
 
 def test_scan_history_returns_an_empty_page_when_no_scans_exist() -> None:
-    repository = import_module("app.repository")
+    repository = import_module("app.persistence.repository")
     with isolated_repository_engine() as engine:
         with Session(engine) as session:
             page = repository.get_scan_history(session, limit=20, offset=0)
@@ -163,7 +163,7 @@ def test_scan_findings_filter_before_pagination_and_stay_with_their_scan(
     expected_ids: list[str],
     expected_total: int,
 ) -> None:
-    repository = import_module("app.repository")
+    repository = import_module("app.persistence.repository")
     with isolated_repository_engine() as engine:
         with Session(engine) as session:
             accepted = repository.create_scan(
@@ -200,7 +200,7 @@ def test_scan_findings_filter_before_pagination_and_stay_with_their_scan(
 
 
 def test_scan_findings_returns_none_for_an_unknown_scan() -> None:
-    repository = import_module("app.repository")
+    repository = import_module("app.persistence.repository")
     with isolated_repository_engine() as engine:
         with Session(engine) as session:
             assert (
@@ -212,7 +212,7 @@ def test_scan_findings_returns_none_for_an_unknown_scan() -> None:
 
 
 def test_scan_findings_returns_empty_page_for_a_saved_scan_without_findings() -> None:
-    repository = import_module("app.repository")
+    repository = import_module("app.persistence.repository")
     scan_id = uuid4()
     with isolated_repository_engine() as engine:
         with Session(engine) as session, session.begin():
@@ -230,3 +230,60 @@ def test_scan_findings_returns_empty_page_for_a_saved_scan_without_findings() ->
         assert page.total == 0
         assert page.limit == 20
         assert page.offset == 0
+
+
+def test_real_scan_attempt_is_committed_before_scanning() -> None:
+    repository = import_module("app.persistence.repository")
+    with isolated_repository_engine() as engine:
+        with Session(engine) as session:
+            scan_id = repository.start_trivy_scan(
+                session,
+                ScanSubmission(image_reference="docker.io/library/alpine:3.20"),
+            )
+            assert not session.in_transaction()
+        with Session(engine) as session:
+            stored = session.get(Scan, scan_id)
+            assert stored is not None
+            assert stored.submitted_reference == "docker.io/library/alpine:3.20"
+            assert stored.status == "running"
+            assert stored.created_at is not None
+            assert stored.started_at == stored.created_at
+            assert stored.started_at.tzinfo is not None
+            assert stored.completed_at is None
+            assert stored.image_id is None
+            assert stored.scanner_name == "trivy"
+            assert stored.scanner_version is None
+            assert stored.scanner_database_metadata is None
+            assert stored.error_details is None
+            assert session.scalar(select(func.count()).select_from(Finding)) == 0
+            assert session.scalar(select(func.count()).select_from(Image)) == 0
+
+
+def test_repeated_real_submissions_create_distinct_scan_attempts() -> None:
+    repository = import_module("app.persistence.repository")
+    submission = ScanSubmission(image_reference="docker.io/library/alpine:3.20")
+    with isolated_repository_engine() as engine:
+        with Session(engine) as session:
+            first = repository.start_trivy_scan(session, submission)
+            second = repository.start_trivy_scan(session, submission)
+        assert first != second
+        with Session(engine) as session:
+            assert session.scalar(select(func.count()).select_from(Scan)) == 2
+            assert session.get(Scan, first).status == "running"
+            assert session.get(Scan, second).status == "running"
+
+
+def test_running_real_attempt_is_visible_in_history() -> None:
+    repository = import_module("app.persistence.repository")
+    with isolated_repository_engine() as engine:
+        with Session(engine) as session:
+            scan_id = repository.start_trivy_scan(
+                session,
+                ScanSubmission(image_reference="docker.io/library/alpine:3.20"),
+            )
+        with Session(engine) as session:
+            page = repository.get_scan_history(session, limit=20, offset=0)
+        assert page.total == 1
+        assert page.items[0].scan_id == scan_id
+        assert page.items[0].status == "running"
+        assert page.items[0].image_reference == "docker.io/library/alpine:3.20"

@@ -1,0 +1,39 @@
+{
+  "SchemaVersion": 2,
+  "Trivy": {
+    "Version": "0.75.0"
+  },
+  "ArtifactName": "docker.io/library/alpine:3.20",
+  "ArtifactType": "container_image",
+  "Metadata": {
+    "OS": {
+      "Family": "alpine",
+      "Name": "3.20.10",
+      "EOSL": true
+    },
+    "RepoDigests": [
+      "alpine@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc"
+    ],
+    "ImageConfig": {
+      "architecture": "amd64",
+      "os": "linux"
+    }
+  },
+  "Results": [
+    {
+      "Target": "docker.io/library/alpine:3.20 (alpine 3.20.10)",
+      "Class": "os-pkgs",
+      "Type": "alpine",
+      "Packages": [
+        {
+          "Name": "alpine-baselayout",
+          "Version": "3.6.5-r0"
+        },
+        {
+          "Name": "alpine-baselayout-data",
+          "Version": "3.6.5-r0"
+        }
+      ]
+    }
+  ]
+}
