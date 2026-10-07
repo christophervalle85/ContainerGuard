@@ -3,13 +3,22 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from redis import Redis
+from redis.backoff import NoBackoff
+from redis.retry import Retry
+from rq import Queue
+from rq.job import Job
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
+from app.api.schemas import ScanSubmission
+from app.jobs import submission as job_submission
 from app.main import app
+from app.persistence import repository
 from app.persistence.database import get_session
 from app.persistence.models import Finding, Scan
 from tests.database_support import isolated_repository_engine
+from tests.queue_support import isolated_scan_queue
 
 client = TestClient(app)
 
@@ -31,6 +40,24 @@ def api_database() -> Iterator[Engine]:
             app.dependency_overrides.update(previous_overrides)
 
 
+@pytest.fixture(autouse=True)
+def api_queue(monkeypatch):
+    with isolated_scan_queue() as (queue, url):
+        monkeypatch.setattr(
+            job_submission,
+            "get_redis_connection",
+            lambda: Redis.from_url(url, socket_connect_timeout=5, socket_timeout=5),
+        )
+        monkeypatch.setattr(
+            job_submission,
+            "get_scan_queue",
+            lambda connection: Queue(
+                queue.name, connection=connection, default_timeout=600
+            ),
+        )
+        yield queue
+
+
 def test_submit_scan_returns_accepted_response() -> None:
     response = client.post(
         "/api/v1/scans",
@@ -40,7 +67,7 @@ def test_submit_scan_returns_accepted_response() -> None:
     assert response.status_code == 202
     body = response.json()
     scan_id = UUID(body["scan_id"])
-    assert body["status"] == "completed"
+    assert body["status"] == "queued"
     assert body["status_url"] == f"/api/v1/scans/{scan_id}"
 
 
@@ -58,7 +85,7 @@ def test_submitted_scan_can_be_retrieved() -> None:
     assert response.json() == {
         "scan_id": accepted["scan_id"],
         "image_reference": "docker.io/library/alpine:3.20",
-        "status": "completed",
+        "status": "queued",
     }
 
 
@@ -123,14 +150,14 @@ def test_scan_history_paginates_newest_first() -> None:
         {
             "scan_id": second.json()["scan_id"],
             "image_reference": "docker.io/library/nginx:1.27",
-            "status": "completed",
+            "status": "queued",
         }
     ]
     assert page_two.json()["items"] == [
         {
             "scan_id": first.json()["scan_id"],
             "image_reference": "docker.io/library/alpine:3.20",
-            "status": "completed",
+            "status": "queued",
         }
     ]
     assert page_one.json()["offset"] == 0
@@ -151,13 +178,13 @@ def test_scan_history_rejects_invalid_pagination(params: dict) -> None:
 
 
 @pytest.fixture
-def findings_url() -> str:
-    response = client.post(
-        "/api/v1/scans",
-        json={"image_reference": "docker.io/library/alpine:3.20"},
-    )
-    assert response.status_code == 202
-    return f"{response.json()['status_url']}/findings"
+def findings_url(api_database: Engine) -> str:
+    # Seed a legacy mock record to keep testing retrieval of saved findings.
+    with Session(api_database) as session:
+        accepted = repository.create_scan(
+            session, ScanSubmission(image_reference="docker.io/library/alpine:3.20")
+        )
+    return f"{accepted.status_url}/findings"
 
 
 def test_findings_returns_fictional_records(findings_url: str) -> None:
@@ -292,8 +319,10 @@ def test_api_submission_is_committed_to_postgresql(api_database: Engine) -> None
                 .select_from(Finding)
                 .where(Finding.scan_id == scan_id)
             )
-            == 3
+            == 0
         )
+        assert scan.status == "queued"
+        assert scan.scanner_name == "trivy"
 
 
 def test_api_retrieves_a_scan_created_outside_the_api(api_database: Engine) -> None:
@@ -311,7 +340,7 @@ def test_api_retrieves_a_scan_created_outside_the_api(api_database: Engine) -> N
     }
 
 
-@pytest.mark.parametrize("status", ["running", "completed", "failed"])
+@pytest.mark.parametrize("status", ["queued", "running", "completed", "failed"])
 def test_empty_real_scan_findings_are_not_labelled_mock(
     api_database: Engine, status: str
 ) -> None:
@@ -382,3 +411,61 @@ def test_openapi_allows_both_values_for_findings_mock_flag() -> None:
     assert flag["type"] == "boolean"
     assert "const" not in flag
     assert "enum" not in flag
+
+
+def test_post_dispatches_the_committed_scan_without_running_trivy(
+    api_database, api_queue, monkeypatch
+):
+    from app.scanning import workflow
+
+    original_enqueue = job_submission.enqueue_scan
+
+    def observe_then_enqueue(scan_id):
+        with Session(api_database) as observer:
+            stored = observer.get(Scan, scan_id)
+            assert stored is not None
+            assert stored.status == "queued"
+        return original_enqueue(scan_id)
+
+    def unexpected_scanner(submission):
+        raise AssertionError("POST must not run Trivy in the API process")
+
+    monkeypatch.setattr(job_submission, "enqueue_scan", observe_then_enqueue)
+    monkeypatch.setattr(workflow, "collect_trivy_result", unexpected_scanner)
+    response = client.post(
+        "/api/v1/scans", json={"image_reference": "docker.io/library/alpine:3.20"}
+    )
+    assert response.status_code == 202
+    scan_id = response.json()["scan_id"]
+    job = Job.fetch(scan_id, connection=api_queue.connection)
+    assert job.func_name == "app.jobs.tasks.run_scan"
+    assert job.args == (scan_id,)
+    assert api_queue.job_ids == [scan_id]
+
+
+def test_queue_unavailable_returns_safe_503_and_saves_failure(
+    api_database, api_queue, monkeypatch
+):
+    monkeypatch.setattr(
+        job_submission,
+        "get_redis_connection",
+        lambda: Redis.from_url(
+            "redis://:private_test_password@127.0.0.1:1/0",
+            socket_connect_timeout=1,
+            socket_timeout=1,
+            retry=Retry(NoBackoff(), 0),
+        ),
+    )
+    response = client.post(
+        "/api/v1/scans", json={"image_reference": "docker.io/library/alpine:3.20"}
+    )
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Scan queue temporarily unavailable"}
+    assert "private_test_password" not in response.text
+    assert api_queue.count == 0
+    with Session(api_database) as observer:
+        stored = observer.scalars(select(Scan)).one()
+        assert stored.status == "failed"
+        assert stored.error_details.startswith("enqueue_failed: ")
+        assert stored.completed_at is not None
+        assert observer.scalar(select(func.count()).select_from(Finding)) == 0

@@ -25,8 +25,9 @@ from app.scanning.trivy.runner import (
 
 
 class ScanWorkflowError(RuntimeError):
-    def __init__(self, code: str) -> None:
+    def __init__(self, code: str, *, retryable: bool = False) -> None:
         self.code = code
+        self.retryable = retryable
         super().__init__(repository.SCAN_FAILURE_MESSAGES[code])
 
 
@@ -41,7 +42,12 @@ class TrivyResult:
 def collect_trivy_result(submission: ScanSubmission) -> TrivyResult:
     try:
         pinned_reference = resolve_docker_tag(submission.image_reference)
-    except RegistryRequestError, ValueError:
+    except RegistryRequestError as error:
+        raise ScanWorkflowError(
+            "resolution_failed",
+            retryable=error.code in {"rate_limited", "unavailable"},
+        ) from None
+    except ValueError:
         raise ScanWorkflowError("resolution_failed") from None
 
     try:
@@ -54,7 +60,10 @@ def collect_trivy_result(submission: ScanSubmission) -> TrivyResult:
             "output_limit": "output_limit",
             "invalid_output": "invalid_report",
         }[error.code]
-        raise ScanWorkflowError(code) from None
+        raise ScanWorkflowError(
+            code,
+            retryable=error.code == "timeout",
+        ) from None
 
     try:
         report = load_trivy_report(raw_report)
@@ -74,7 +83,16 @@ def perform_trivy_scan(
     submission: ScanSubmission,
 ) -> UUID:
     scan_id = repository.start_trivy_scan(session, submission)
+    return _finish_running_trivy_scan(session, scan_id, submission)
 
+
+def _finish_running_trivy_scan(
+    session: Session,
+    scan_id: UUID,
+    submission: ScanSubmission,
+    *,
+    allow_retry: bool = False,
+) -> UUID:
     try:
         result = collect_trivy_result(submission)
         repository.complete_trivy_scan(
@@ -86,6 +104,9 @@ def perform_trivy_scan(
             scanner_database_metadata=result.database_metadata,
         )
     except ScanWorkflowError as error:
+        if error.retryable and allow_retry:
+            repository.requeue_trivy_scan(session, scan_id, error.code)
+            raise
         repository.fail_trivy_scan(session, scan_id, error.code)
     except ValueError:
         repository.fail_trivy_scan(session, scan_id, "invalid_report")
@@ -93,3 +114,22 @@ def perform_trivy_scan(
         repository.fail_trivy_scan(session, scan_id, "persistence_failed")
 
     return scan_id
+
+
+def process_queued_trivy_scan(
+    session: Session,
+    scan_id: UUID,
+    *,
+    allow_retry: bool = False,
+) -> UUID:
+    submission = repository.claim_queued_trivy_scan(session, scan_id)
+
+    if submission is None:
+        return scan_id
+
+    return _finish_running_trivy_scan(
+        session,
+        scan_id,
+        submission,
+        allow_retry=allow_retry,
+    )

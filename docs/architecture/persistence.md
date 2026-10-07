@@ -5,14 +5,15 @@ Status: implemented. Real scan integration is described in [image scanning](scan
 ## Scope
 
 Replace process-local dictionaries with durable scan history while preserving
-the existing API response shapes. POST still creates explicitly fictional
-findings. The synchronous real scan workflow uses this storage; see [image scanning](scanning.md).
+the existing API response shapes. POST now creates queued Trivy attempts;
+workers save real findings. See [image scanning](scanning.md) and
+[background jobs](jobs.md).
 
 ## Architecture
 
 FastAPI routes use a request-scoped synchronous SQLAlchemy session and a small
 repository module for queries. PostgreSQL stores records. Alembic owns schema
-changes. Docker Compose initially runs PostgreSQL only; the API still runs
+changes. Docker Compose runs PostgreSQL and Redis; the API and worker run
 locally through uv. Full backend containerization is outside this change.
 
 Local development and CI use PostgreSQL 17, SQLAlchemy with Psycopg, and Alembic.
@@ -56,10 +57,13 @@ image is restricted so historical scan associations are not silently lost.
 
 ## Writes, reads, and errors
 
-Generate the scan UUID, construct the mock findings, and insert the completed
-scan plus its findings in one transaction. Commit before returning 202. Any
-insert failure rolls back the entire submission. No partially populated scan is
-reported as completed.
+Generate the scan UUID and commit a queued Trivy record before submitting its
+ID to Redis. The worker claims the row in a short transaction and performs
+external work after committing. Completion associates the image, inserts
+findings, and marks the scan completed atomically. A failed completion rolls
+back before a separate failure transaction. No partially populated scan is
+reported as completed. Redis submission and PostgreSQL writes are separate;
+manual recovery handles interrupted queued or running attempts.
 
 Get/list operations query PostgreSQL. Apply severity filtering, ordering,
 counts, limit, and offset in SQL rather than loading all records into Python.
@@ -101,7 +105,8 @@ Prove committed records are visible through a new session. Add relationship,
 occurrence uniqueness, repeated CVE, UNKNOWN, null fixed-version, and unresolved
 failed-scan cases. Exercise safe database-unavailable behavior.
 
-CI starts a PostgreSQL service, waits for readiness, runs migrations, then runs
+CI starts PostgreSQL services and isolated test Redis, waits for readiness, runs
+migrations, then runs
 the API/database suite plus existing lint/format checks. No live registry access
 is needed. The health-only endpoint remains a process liveness check.
 
@@ -114,10 +119,10 @@ is needed. The health-only endpoint remains a process liveness check.
 - Submit through the API, restart the API, and retrieve the same ID and findings.
 - Restart the PostgreSQL container without deleting its volume and retrieve again.
 - README covers configuration, migrations, test setup, restart/reset semantics,
-  and the continuing mock-scanner limitation.
+  and background job configuration.
 
 ## Deferred work
 
-Background workers, full backend containerization, accounts, policies, the
+Full backend containerization, accounts, policies, the
 dashboard, and cloud deployment remain future work. Digest resolution and real
 scanner execution are covered in [image scanning](scanning.md).

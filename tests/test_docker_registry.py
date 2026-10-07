@@ -82,7 +82,10 @@ def test_rejects_invalid_token_responses(monkeypatch, token_document):
         (404, "not_found"),
         (429, "rate_limited"),
         (500, "unavailable"),
-        (302, "unavailable"),
+        (302, "invalid_response"),
+        (400, "invalid_response"),
+        (408, "unavailable"),
+        (503, "unavailable"),
     ],
 )
 def test_reports_registry_errors_without_exposing_response_content(

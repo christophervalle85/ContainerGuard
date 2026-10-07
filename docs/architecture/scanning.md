@@ -1,9 +1,9 @@
 # Image scanning
 
 ContainerGuard scans image contents with Trivy without running the image.
-The synchronous real scanning workflow runs alongside the existing mock API. The
-submission endpoint still creates fictional findings until that integration
-is ready.
+The API queues real scans for an RQ worker. The synchronous development helper
+remains available for debugging and bypasses background retries.
+See [background jobs](jobs.md) for submission and recovery behavior.
 
 ## Image identity
 
@@ -49,8 +49,9 @@ change the shared cache. Image OS metadata is not a substitute.
 
 ## Persistence boundary
 
-The workflow first commits a running attempt with the submitted reference and
-start time. Registry resolution and scanner execution happen outside that
+API submission first commits a queued attempt. A worker locks and claims that
+row, committing its running state and start time before external work begins.
+The direct development helper creates a running attempt immediately. Registry resolution and scanner execution happen outside that
 transaction. A completion transaction associates the image, inserts findings,
 and marks the scan completed together. The image identity uniqueness constraint
 allows repeated scans to share one image row while keeping findings separate.
@@ -62,15 +63,18 @@ Trivy attempt; they cannot overwrite an already terminal record.
 
 If the database cannot save an attempt or its failure record, the workflow raises
 the database error rather than claiming a durable outcome. Interrupted running
-scans have no automatic recovery yet.
+scans require the guarded manual recovery procedure in [background jobs](jobs.md);
+there is no automatic recovery. Retryable failures return to queued when RQ has
+budget remaining, using the same scan ID. Permanent and exhausted failures
+receive a terminal failure record.
 
 API retrieval marks real attempts `mock: false` regardless of finding count,
-filtering, or lifecycle state. POST still creates mocks until worker integration.
+filtering, or lifecycle state. Earlier mock records remain distinguishable.
 
 ## Verification
 
 Routine tests use sample registry responses, scanner reports, temporary local
-executables, and the isolated PostgreSQL test database. They do not download
+executables, and isolated PostgreSQL and Redis test services. They do not download
 images or depend on public registry availability.
 
 A live local smoke test resolved `docker.io/library/alpine:3.20` to
