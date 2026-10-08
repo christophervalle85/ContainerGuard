@@ -13,61 +13,104 @@ worker runs Trivy while the API stays available. New findings responses use
 
 ## Run it locally
 
-You'll need Git, Docker with Compose, [uv](https://docs.astral.sh/uv/getting-started/installation/),
-and [Trivy](https://trivy.dev/) installed on the machine running the worker.
-On macOS, install Trivy with `brew install trivy`. The local demonstrations used
-Trivy 0.75.0.
-
-The project uses Python 3.14. If you don't have it, uv can install it for you.
+For the container setup, you only need Git and Docker with Compose. Start the
+Docker engine, then run:
 
 ```bash
 git clone https://github.com/christophervalle85/ContainerGuard.git
 cd ContainerGuard
-uv python install
-uv sync --locked
-docker compose --env-file .env.example up -d --wait db redis
-uv run --env-file .env.example alembic upgrade head
-uv run --env-file .env.example uvicorn app.main:app --reload --host 127.0.0.1
+cp .env.example .env
+docker compose --env-file .env up -d --build
 ```
 
-Keep the API running. In a second terminal, from the same project folder, start
-the worker:
+If you already have a `.env`, keep it and add any missing settings from
+`.env.example`. The example credentials are for local demonstrations. Real
+`.env` files are ignored by Git and excluded from the image build context.
+
+Compose builds separate API and worker images, starts PostgreSQL and Redis,
+and runs `alembic upgrade head` before starting the application services. Check
+startup with:
 
 ```bash
-uv run --env-file .env.example python -m app.jobs.worker
+docker compose --env-file .env ps -a
 ```
 
-Keep this worker running so it can process new jobs and scheduled retries.
-Restart it after changing worker code. Use Ctrl+C to request a graceful stop;
-a job already in progress may finish before it exits.
+Expect `api`, `db`, `redis`, and `worker` to become healthy. The `migrate` service
+should show `Exited (0)`; it has finished its job. A worker health check confirms
+its own registration and recent heartbeat, not that every scan will succeed.
 
-Open <http://127.0.0.1:8000/health>. You should get:
+Open <http://127.0.0.1:8000/health> for `{"status":"ok"}` and
+<http://127.0.0.1:8000/docs> for the interactive API. The first scan can take
+longer while Trivy downloads its vulnerability database into the worker's named
+cache volume. Internet access is needed for image resolution and scanner updates.
 
-```json
-{"status": "ok"}
+The API image contains Python and the locked application dependencies. The worker
+also contains Trivy 0.75.0. Both run as UID/GID 10001, and neither mounts Docker's
+socket. Submitted images are inspected remotely, without running them.
+Application code is copied during the build, so rebuild after changing it.
+
+### Configuration and ports
+
+Container clients use `CONTAINER_DATABASE_URL` with `db:5432` and
+`CONTAINER_REDIS_URL` with `redis:6379`. Host-based development commands use
+`DATABASE_URL` at `127.0.0.1:5433` and `REDIS_URL` at `127.0.0.1:6380`.
+Inside an application container, localhost means that container itself.
+
+Keep database credentials in both database URLs consistent with `POSTGRES_*`.
+Percent-encode special characters in URL credentials, such as `@` as `%40`.
+Changing `POSTGRES_PASSWORD` does not change a password in an already initialized
+PostgreSQL volume; existing databases need an explicit password change.
+
+Published API, database, and Redis ports bind to localhost. If a port is occupied,
+change `API_PORT`, `POSTGRES_PORT`, or `REDIS_PORT`. Update host URLs alongside
+changed database/Redis ports; container URLs keep their internal ports. Test
+services use separate ports 5434 and 6381 and dedicated storage.
+
+### Update an existing installation
+
+After pulling changes, build the new images, stop the application services,
+and explicitly rerun migrations. This sequence does not depend on the exit state
+of an older migration container:
+
+```bash
+docker compose --env-file .env build api worker
+docker compose --env-file .env stop api worker
+docker compose --env-file .env up -d --wait db redis
+docker compose --env-file .env run --rm --no-deps migrate
+docker compose --env-file .env up -d --force-recreate api worker
 ```
 
-FastAPI's interactive API docs are at <http://127.0.0.1:8000/docs>.
-Use Ctrl+C in the terminal to stop the server.
+Run the commands one at a time. If migration fails, leave the application stopped
+and investigate before continuing. The initial Compose startup also blocks the
+API and worker if migrations fail.
 
-Start your Docker engine before following the setup commands. Migrations create
-the tables; the application does not migrate the database at startup. Run
-`alembic upgrade head` again after pulling changes that add migrations.
+### Develop with Python on the host
 
-The API and database ports bind to localhost. `.env.example` contains local
-demonstration credentials. For custom settings, copy it to `.env` and use
-`--env-file .env` in both Compose and uv commands. Real `.env` files are ignored.
+For editing with automatic API reload, install
+[uv](https://docs.astral.sh/uv/getting-started/installation/) and
+[Trivy](https://trivy.dev/) on the machine running the worker. The project uses
+Python 3.14; uv can install it. On macOS, `brew install trivy` installs the scanner.
+Stop the containerized API and worker first so they do not compete with host
+processes for ports or jobs:
 
-PostgreSQL uses port 5432 inside its container and port 5433 on your computer.
-The API runs on your computer, so DATABASE_URL uses port 5433. If that port is
-occupied, change both POSTGRES_PORT and the port in DATABASE_URL. The separate
-test database uses TEST_POSTGRES_PORT and TEST_DATABASE_URL, defaulting to 5434.
-Redis uses host port 6380 for development and 6381 for tests. Its container port
-is 6379. Change REDIS_PORT and REDIS_URL together if needed. Keep development
-and test services separate.
+```bash
+docker compose --env-file .env stop api worker
+uv python install
+uv sync --locked
+docker compose --env-file .env up -d --wait db redis
+uv run --env-file .env alembic upgrade head
+uv run --env-file .env uvicorn app.main:app --reload --host 127.0.0.1
+```
 
-If port 8000 is already in use, add `--port 8001` to the server command and use
-that port in the browser.
+In a second terminal, from the project folder:
+
+```bash
+uv run --env-file .env python -m app.jobs.worker
+```
+
+These commands use the same `.env` configuration as the container setup. Keep the worker running to process jobs and scheduled retries. Restart it
+after changing worker code. Ctrl+C requests a graceful stop; an active job may
+finish before the worker exits. Apply `alembic upgrade head` after schema changes.
 
 ## Try the scan API
 
@@ -127,7 +170,7 @@ useful for inspecting the stored image identity and scanner metadata. Start
 PostgreSQL and apply migrations first, then run it from the project folder:
 
 ```bash
-uv run --env-file .env.example python - docker.io/library/alpine:3.20.0 <<'PY'
+uv run --env-file .env python - docker.io/library/alpine:3.20.0 <<'PY'
 import json
 import sys
 
@@ -165,7 +208,7 @@ PY
 
 The first scan can take longer while Trivy downloads its vulnerability database.
 Submitted images are inspected remotely, without running them or accessing
-Docker's socket. Compose manages the local PostgreSQL and Redis services.
+Docker's socket. This direct helper requires Trivy installed on the host.
 
 Copy the printed scan ID into the GET endpoints in the API docs. Real findings
 return `mock: false`, even for empty pages. The scan endpoint shows the submitted
@@ -232,13 +275,19 @@ safe `error_details`; acceptance does not mean the image has been scanned.
 
 ### Saved history and restarts
 
-Submit a scan and keep its ID. Retrieve the scan and findings, stop the API with
-Ctrl+C, and restart it using the server command above. Both GET endpoints should
-still return the saved data. You can also restart PostgreSQL:
+Submit a scan and keep its ID. Retrieve the scan and findings, then recreate the
+application containers without deleting their volumes:
 
 ```bash
-docker compose --env-file .env.example restart db
-docker compose --env-file .env.example up -d --wait db
+docker compose --env-file .env up -d --force-recreate api worker
+```
+
+Both GET endpoints should still return the saved data. For host-based development,
+stop and restart the API process instead. You can also restart PostgreSQL:
+
+```bash
+docker compose --env-file .env restart db
+docker compose --env-file .env up -d --wait db
 ```
 
 Repeat both GET requests with the same ID. This was checked locally: the scan and
@@ -247,16 +296,17 @@ The development database stores its files in the Compose-managed `postgres_data`
 named volume. Stopping or removing its container keeps that volume:
 
 ```bash
-docker compose --env-file .env.example --profile test down
+docker compose --env-file .env --profile test down
 ```
 
 **To deliberately delete all local development scan history**, remove the volume:
 
 ```bash
-docker compose --env-file .env.example --profile test down --volumes
+docker compose --env-file .env --profile test down --volumes
 ```
 
-After a reset, start PostgreSQL and Redis and apply migrations again. The test database
+This reset also removes queued work and the Trivy cache. Start the stack again
+with `up -d --build`; the migration service recreates the schema. The test database
 uses temporary storage and loses its contents when its container stops.
 
 The health endpoint checks only that the API process responds. It does not check
@@ -268,8 +318,8 @@ scans wait in the queue.
 A local Redis service is available in Compose. Start it and check its connection:
 
 ```bash
-docker compose --env-file .env.example up -d --wait redis
-docker compose --env-file .env.example exec redis redis-cli ping
+docker compose --env-file .env up -d --wait redis
+docker compose --env-file .env exec redis redis-cli ping
 ```
 
 The connection check should return `PONG`. Redis listens on localhost port 6380
@@ -303,8 +353,28 @@ have stopped. Keep them stopped throughout recovery, and run one recovery
 command at a time. Inspect the scan ID first: recovery accepts only queued or
 running Trivy attempts with no saved image or findings.
 
+For the container setup:
+
 ```bash
-uv run --env-file .env.example python -m app.jobs.recovery SCAN_UUID --workers-stopped
+docker compose --env-file .env stop worker
+docker compose --env-file .env ps -a worker
+docker compose --env-file .env run --rm --no-deps worker \
+  python -m app.jobs.recovery SCAN_UUID --workers-stopped
+```
+
+The normal worker must show as stopped before recovery. Stop any host workers
+or other worker containers too. The one-off recovery container uses the worker
+image and configuration; `--no-deps` prevents it from starting dependencies.
+Only after recovery succeeds, start the normal worker:
+
+```bash
+docker compose --env-file .env start worker
+```
+
+For a host-based worker, stop its processes and use:
+
+```bash
+uv run --env-file .env python -m app.jobs.recovery SCAN_UUID --workers-stopped
 ```
 
 Replace SCAN_UUID with the existing ID. The command resets the attempt to queued,
@@ -323,13 +393,80 @@ running record with no active scanner. That second exercise simulated an
 interruption; it did not kill a live scan. See the
 [background job notes](docs/architecture/jobs.md) for failure windows and guards.
 
+## Container logs and troubleshooting
+
+```bash
+docker compose --env-file .env ps -a
+docker compose --env-file .env logs --tail=40 api worker migrate
+docker compose --env-file .env logs -f worker
+```
+
+`--tail=40` shows the last 40 lines per service and exits. `-f` follows new output;
+Ctrl+C stops the log viewer without stopping the worker. Application events are
+JSON with time, level, logger, and message. Scan/job events include `scan_id` and
+`job_id` where available, so the same UUID connects submission with execution.
+RQ and Uvicorn access logs retain their native formats. `job_finished` means the
+job function returned; check the saved scan status for its actual outcome.
+
+- **API or worker never starts:** check `db`, `redis`, and `migrate` status and
+  logs. `migrate` must exit successfully. An exited migration container is normal.
+- **Scans stay queued:** check the worker is running and healthy. `/health` only
+  checks the API process; it does not verify Redis, PostgreSQL, or worker readiness.
+- **First scan is slow:** Trivy may be downloading its database. Worker logs
+  show lifecycle events, but scanner download progress is captured internally
+  and is not streamed into those logs. Recreating the worker retains its cache;
+  future updates still need downloads.
+- **A scan stays running after an interruption:** inspect it and follow manual
+  recovery above. Restarting a container does not automatically repair the row.
+- **Worker refuses to restart after a forced stop:** the fixed worker name can
+  still be registered in Redis. Confirm the old container and its processes are
+  stopped, allow the registration to expire, then start the worker again. Do not
+  delete registrations while a worker might still be alive.
+- **Cache permission errors:** stop all workers, then repair only the cache
+  directory ownership using the worker image:
+
+  ```bash
+  docker compose --env-file .env stop worker
+  docker compose --env-file .env run --rm --no-deps --user 0 worker \
+    chown -R 10001:10001 /var/cache/trivy
+  docker compose --env-file .env start worker
+  ```
+
+  The repair command runs as root once; normal worker execution remains non-root.
+  It preserves cached data rather than deleting the volume.
+
+Compose gives the worker up to 650 seconds to stop gracefully, longer than its
+600-second job timeout. Wait for stop to finish before recovery. A forced stop or
+Docker engine crash can interrupt work and leave stale registrations. Do not
+start workers during recovery; there is no automatic recovery or exactly-once
+guarantee.
+
+Image builds, cached layers, PostgreSQL data, and Trivy's database all consume
+Docker disk space. Trivy also needs temporary space and memory for image contents.
+The initial database download in the host demonstration was about 119 MiB; that
+is not a bound on cache size or total storage. This is a local development setup,
+and no universal RAM/disk minimum or production capacity has been established.
+A disposable fresh-volume run on Docker configured with 10 CPUs and
+7.75 GiB of memory completed its first scan in about 57.3 seconds,
+including the database download. This is one observed run, not a sizing target.
+
+Container checks verified a real scan, retained findings after application
+container replacement, queued work completing after worker restart, recovery
+of a simulated interrupted scan, and completion of an active scan before a
+graceful worker stop returned. A separate fresh-volume stack also verified
+busy-worker health, one-off recovery,
+retry/scheduling fixtures in the worker image, migration reruns, and retained data
+and cache after restarts. The recovery exercises did not kill a live scan.
+The [container notes](docs/architecture/containers.md) describe the runtime layout
+and remaining verification limits.
+
 ## Run the checks
 
 From the project folder:
 
 ```bash
-docker compose --env-file .env.example --profile test up -d --wait test-db test-redis
-uv run --locked --env-file .env.example pytest
+docker compose --env-file .env --profile test up -d --wait test-db test-redis
+uv run --locked --env-file .env pytest
 uv run --locked ruff check .
 uv run --locked ruff format --check .
 ```
@@ -369,7 +506,10 @@ That exercise is recorded in [PR #1](https://github.com/christophervalle85/Conta
 - `app/scanning/workflow.py`: coordinates real scans and saves their outcomes.
 - `app/jobs/`: Redis connections, submission, worker entry point, and manual recovery.
 - `migrations/` and `alembic.ini`: database schema migrations.
-- `compose.yaml`: development and test PostgreSQL and Redis services.
+- `Dockerfile.api` and `Dockerfile.worker`: separate non-root runtime images.
+- `compose.yaml`: API, worker, migration, database, Redis, and isolated test services.
+- `app/logging_config.py`: correlated JSON application logs.
+- `docs/architecture/containers.md`: container runtime and operational decisions.
 - `docs/architecture/persistence.md`: storage design and decisions.
 - `docs/architecture/scanning.md`: scanning decisions, current limits, and live test notes.
 - `docs/architecture/jobs.md`: queue lifecycle, retries, and recovery decisions.
@@ -386,5 +526,5 @@ uv recreates the local environment from the committed dependency files.
 
 ## Next steps
 
-Background scanning is in place. Container packaging, policy evaluation, and
-a dashboard are still ahead.
+The backend runs through Compose. Policy evaluation and a dashboard are still
+ahead; interrupted-job reconciliation and deployment hardening remain future work.

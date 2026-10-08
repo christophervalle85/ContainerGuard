@@ -1,5 +1,6 @@
 """Collect real scanner results before a short persistence transaction."""
 
+import logging
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -22,6 +23,8 @@ from app.scanning.trivy.runner import (
     read_trivy_database_metadata,
     run_trivy_scan,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class ScanWorkflowError(RuntimeError):
@@ -83,6 +86,7 @@ def perform_trivy_scan(
     submission: ScanSubmission,
 ) -> UUID:
     scan_id = repository.start_trivy_scan(session, submission)
+    logger.info("scan_started", extra={"scan_id": str(scan_id)})
     return _finish_running_trivy_scan(session, scan_id, submission)
 
 
@@ -103,15 +107,31 @@ def _finish_running_trivy_scan(
             result.findings,
             scanner_database_metadata=result.database_metadata,
         )
+        logger.info("scan_completed", extra={"scan_id": str(scan_id)})
     except ScanWorkflowError as error:
         if error.retryable and allow_retry:
             repository.requeue_trivy_scan(session, scan_id, error.code)
+            logger.warning(
+                "scan_retry_queued",
+                extra={"scan_id": str(scan_id), "error_code": error.code},
+            )
             raise
         repository.fail_trivy_scan(session, scan_id, error.code)
+        logger.warning(
+            "scan_failed", extra={"scan_id": str(scan_id), "error_code": error.code}
+        )
     except ValueError:
         repository.fail_trivy_scan(session, scan_id, "invalid_report")
+        logger.warning(
+            "scan_failed",
+            extra={"scan_id": str(scan_id), "error_code": "invalid_report"},
+        )
     except SQLAlchemyError:
         repository.fail_trivy_scan(session, scan_id, "persistence_failed")
+        logger.warning(
+            "scan_failed",
+            extra={"scan_id": str(scan_id), "error_code": "persistence_failed"},
+        )
 
     return scan_id
 
@@ -125,8 +145,10 @@ def process_queued_trivy_scan(
     submission = repository.claim_queued_trivy_scan(session, scan_id)
 
     if submission is None:
+        logger.info("scan_claim_skipped", extra={"scan_id": str(scan_id)})
         return scan_id
 
+    logger.info("scan_started", extra={"scan_id": str(scan_id)})
     return _finish_running_trivy_scan(
         session,
         scan_id,
