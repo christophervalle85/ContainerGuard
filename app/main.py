@@ -16,8 +16,11 @@ from app.api.schemas import (
     Severity,
 )
 from app.jobs import submission as job_submission
+from app.logging_config import configure_logging
 from app.persistence import repository
 from app.persistence.database import get_session
+
+configure_logging()
 
 app = FastAPI(title="ContainerGuard")
 

@@ -100,3 +100,21 @@ A subsequent scan saved database format version 2 with `UpdatedAt`
 The README includes a reproducible development command. Tests also exercise
 truncated chunked HTTP responses so interrupted registry transfers become saved
 resolution failures instead of leaving a running attempt.
+
+Container verification repeated the real scan from a fresh database and Trivy
+cache on October 8, 2026. Alpine 3.20.0 resolved to `sha256:216266c86fc4dcef5619930bd394245824c2af52fd21ba7c6fa0e618657d4c3b` on
+`linux/amd64`. Trivy 0.75.0 produced 70 persisted
+findings with mock: false. The stored database metadata was:
+
+```json
+{
+  "Version": 2,
+  "UpdatedAt": "2026-10-08T19:05:21.721409049Z",
+  "NextUpdate": "2026-10-09T19:05:21.721408648Z",
+  "DownloadedAt": "2026-10-08T21:50:40.138037468Z"
+}
+```
+
+These are observations of this run, not fixed counts or a database freshness
+promise. The worker remained healthy while busy, and its cache remained writable
+and reusable after application container replacement.

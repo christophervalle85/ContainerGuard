@@ -1,0 +1,18 @@
+# Send only runtime inputs and build definitions to Docker.
+**
+!Dockerfile.*
+!.dockerignore
+!pyproject.toml
+!uv.lock
+!alembic.ini
+!app/
+!app/**
+!migrations/
+!migrations/**
+
+# Keep local files out even when they appear beneath an included directory.
+**/__pycache__
+**/*.py[cod]
+**/.env
+**/.env.*
+**/.DS_Store

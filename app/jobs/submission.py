@@ -41,10 +41,13 @@ def submit_scan(session: Session, submission: ScanSubmission) -> ScanAccepted:
         job_id = enqueue_scan(scan_id)
     except RedisError, DuplicateJobError, ValueError:
         repository.fail_queued_scan(session, scan_id)
-        logger.warning("scan_id=%s enqueue_failed", scan_id)
+        logger.warning(
+            "enqueue_failed",
+            extra={"scan_id": str(scan_id), "job_id": str(scan_id)},
+        )
         raise ScanQueueUnavailable("Scan queue temporarily unavailable") from None
 
-    logger.info("scan_id=%s job_id=%s queued", scan_id, job_id)
+    logger.info("scan_queued", extra={"scan_id": str(scan_id), "job_id": job_id})
 
     return ScanAccepted(
         scan_id=scan_id,

@@ -70,7 +70,13 @@ not a lease or an exactly-once guarantee across services.
 
 ## Manual recovery
 
-Recovery is an operator procedure, not a live-worker repair loop:
+Recovery is an operator procedure, not a live-worker repair loop. For the
+container setup, stop the normal worker with
+`docker compose --env-file .env stop worker` and confirm it is stopped
+with `ps -a worker`. Stop host workers and any other worker containers as well.
+The graceful stop budget is 650 seconds; do not recover while it is still stopping.
+
+Follow this sequence:
 
 1. Stop every scan worker and confirm job children and scanner subprocesses have
    also stopped. Keep them stopped until recovery finishes.
@@ -79,10 +85,18 @@ Recovery is an operator procedure, not a live-worker repair loop:
 3. Run one recovery command at a time:
 
    ```bash
-   uv run --env-file .env.example python -m app.jobs.recovery SCAN_UUID --workers-stopped
+   docker compose --env-file .env run --rm --no-deps worker \
+     python -m app.jobs.recovery SCAN_UUID --workers-stopped
    ```
 
-4. Restart the normal worker and retrieve the same scan ID through the API.
+4. Only after recovery succeeds, run
+   `docker compose --env-file .env start worker` and retrieve the same
+   scan ID through the API.
+
+The one-off command uses the worker image, network, and configuration without
+starting the normal worker. For host development, the equivalent is
+`uv run --env-file .env python -m app.jobs.recovery SCAN_UUID --workers-stopped`.
+No automatic restart policy is configured for the application services.
 
 The explicit flag confirms the operator has stopped the processes. Recovery
 also refuses while Redis lists a scan worker. Registrations can outlive crashed
@@ -111,3 +125,17 @@ completion after restart, and retrieval of real findings with `mock: false`.
 A second exercise deliberately created a running record without an active
 scanner, recovered that ID, and completed it through the worker. This simulated
 an interruption; it did not terminate a live Trivy process.
+
+The container verification repeated queued-work restart and simulated recovery
+with real Trivy findings. The guided recovery was executed inside the running
+API container, which has the same recovery code and dependencies. The documented
+one-off worker command is the normal operator entry point; its help output and
+refusal while a worker remained registered were verified
+separately. Successful recovery through that one-off command was then verified
+in a disposable stack using a simulated running attempt. Retry budgets and
+5/15-second scheduling were also checked by fixtures inside the worker image;
+these tests did not create public-network failures.
+
+An active real scan also completed before the learner's graceful worker stop
+returned. This establishes the observed normal-stop behavior; it does not add
+a guarantee for engine crashes, forced stops, or cross-service write failures.

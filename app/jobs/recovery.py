@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.jobs.connection import get_redis_connection, get_scan_queue
 from app.jobs.submission import enqueue_scan
+from app.logging_config import configure_logging
 from app.persistence import repository
 from app.persistence.database import get_engine
 
@@ -50,7 +51,7 @@ def recover_scan(
 
         job_id = enqueue_scan(scan_id)
 
-    logger.info("scan_id=%s job_id=%s recovery_queued", scan_id, job_id)
+    logger.info("recovery_queued", extra={"scan_id": str(scan_id), "job_id": job_id})
     return job_id
 
 
@@ -64,6 +65,7 @@ def main() -> None:
         help="Confirm all scan workers and their scan subprocesses are stopped",
     )
     args = parser.parse_args()
+    configure_logging()
     try:
         with Session(get_engine()) as session:
             job_id = recover_scan(
