@@ -6,6 +6,9 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.api.evaluations import router as evaluation_router
+from app.api.policies import router as policy_router
+from app.api.sboms import router as sbom_router
 from app.api.schemas import (
     ErrorResponse,
     FindingPage,
@@ -23,6 +26,9 @@ from app.persistence.database import get_session
 configure_logging()
 
 app = FastAPI(title="ContainerGuard")
+app.include_router(sbom_router)
+app.include_router(policy_router)
+app.include_router(evaluation_router)
 
 DatabaseSession = Annotated[Session, Depends(get_session)]
 DATABASE_ERROR_RESPONSES = {
