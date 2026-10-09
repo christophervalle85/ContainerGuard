@@ -6,7 +6,9 @@ from sqlalchemy.orm import Session
 
 from app.api.schemas import ScanSubmission
 from app.persistence import repository
+from app.persistence.artifacts import add_sbom_outcome
 from app.persistence.models import Finding, Image, Scan
+from app.scanning.trivy.sbom import SbomOutcome
 from tests.database_support import isolated_repository_engine
 
 SUBMISSION = ScanSubmission(image_reference="docker.io/library/alpine:3.20")
@@ -93,7 +95,7 @@ def test_non_trivy_scan_cannot_be_recovered():
                 repository.prepare_scan_recovery(session, scan_id, workers_stopped=True)
 
 
-@pytest.mark.parametrize("saved_result", ["image", "finding"])
+@pytest.mark.parametrize("saved_result", ["image", "finding", "artifact"])
 def test_recovery_refuses_inconsistent_attempts_with_saved_results(saved_result):
     with isolated_repository_engine() as engine:
         with Session(engine) as session:
@@ -109,6 +111,10 @@ def test_recovery_refuses_inconsistent_attempts_with_saved_results(saved_result)
                     session.add(image)
                     session.flush()
                     session.get(Scan, scan_id).image_id = image.id
+                elif saved_result == "artifact":
+                    add_sbom_outcome(
+                        session, scan_id, SbomOutcome(None, "sbom_timeout")
+                    )
                 else:
                     session.add(
                         Finding(

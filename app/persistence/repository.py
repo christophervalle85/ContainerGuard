@@ -16,10 +16,12 @@ from app.api.schemas import (
     ScanSubmission,
     Severity,
 )
-from app.persistence.models import Finding, Image, Scan
+from app.persistence.artifacts import add_sbom_outcome
+from app.persistence.models import Finding, Image, SbomArtifact, Scan
 from app.scanning.mock_scanner import build_mock_findings
 from app.scanning.trivy.parser import ParsedFinding, ParsedScanMetadata
 from app.scanning.trivy.runner import build_trivy_command
+from app.scanning.trivy.sbom import SbomOutcome
 
 SCAN_FAILURE_MESSAGES = {
     "resolution_failed": "Image reference could not be resolved",
@@ -278,6 +280,8 @@ def complete_trivy_scan(
     metadata: ParsedScanMetadata,
     findings: list[ParsedFinding],
     scanner_database_metadata: dict | None = None,
+    *,
+    sbom_outcome: SbomOutcome | None = None,
 ) -> None:
     with session.begin():
         scan = session.scalar(select(Scan).where(Scan.id == scan_id).with_for_update())
@@ -287,6 +291,9 @@ def complete_trivy_scan(
 
         scan.image_id = _get_or_create_trivy_image(session, pinned_reference, metadata)
         session.add_all(_build_trivy_finding_records(scan_id, findings))
+
+        if sbom_outcome is not None:
+            add_sbom_outcome(session, scan_id, sbom_outcome)
 
         scan.scanner_version = metadata.scanner_version
         scan.scanner_database_metadata = scanner_database_metadata
@@ -382,7 +389,10 @@ def prepare_scan_recovery(
         finding_count = session.scalar(
             select(func.count()).select_from(Finding).where(Finding.scan_id == scan_id)
         )
-        if scan.image_id is not None or finding_count:
+        artifact_exists = session.scalar(
+            select(SbomArtifact.id).where(SbomArtifact.scan_id == scan_id).limit(1)
+        )
+        if scan.image_id is not None or finding_count or artifact_exists is not None:
             raise ValueError("Scan already has saved results")
 
         scan.status = "queued"

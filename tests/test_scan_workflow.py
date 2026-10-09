@@ -10,6 +10,7 @@ from app.api.schemas import ScanSubmission
 from app.persistence.models import Finding, Image, Scan
 from app.registries.docker_hub import RegistryRequestError
 from app.scanning.trivy.process_runner import ProcessExecutionError
+from app.scanning.trivy.sbom import SbomOutcome
 from tests.database_support import isolated_repository_engine
 
 DIGEST = "sha256:" + "a" * 64
@@ -44,6 +45,12 @@ def prepare_scanner(monkeypatch, raw_report):
     monkeypatch.setattr(workflow, "run_trivy_scan", scan)
     monkeypatch.setattr(
         workflow, "read_trivy_database_metadata", lambda version: None, raising=False
+    )
+    monkeypatch.setattr(
+        workflow,
+        "collect_sbom",
+        lambda *args, **kwargs: SbomOutcome(None, "sbom_unavailable"),
+        raising=False,
     )
     return workflow
 

@@ -23,6 +23,8 @@ from app.scanning.trivy.runner import (
     read_trivy_database_metadata,
     run_trivy_scan,
 )
+from app.scanning.trivy.sbom import SbomOutcome
+from app.scanning.trivy.sbom_runner import collect_sbom
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +42,7 @@ class TrivyResult:
     metadata: ParsedScanMetadata
     findings: list[ParsedFinding]
     database_metadata: dict | None = None
+    sbom_outcome: SbomOutcome | None = None
 
 
 def collect_trivy_result(submission: ScanSubmission) -> TrivyResult:
@@ -78,7 +81,14 @@ def collect_trivy_result(submission: ScanSubmission) -> TrivyResult:
         raise ScanWorkflowError("invalid_report") from None
 
     database_metadata = read_trivy_database_metadata(metadata.scanner_version)
-    return TrivyResult(pinned_reference, metadata, findings, database_metadata)
+    sbom_outcome = collect_sbom(
+        pinned_reference,
+        platform=metadata.platform,
+        scanner_version=metadata.scanner_version,
+    )
+    return TrivyResult(
+        pinned_reference, metadata, findings, database_metadata, sbom_outcome
+    )
 
 
 def perform_trivy_scan(
@@ -106,7 +116,19 @@ def _finish_running_trivy_scan(
             result.metadata,
             result.findings,
             scanner_database_metadata=result.database_metadata,
+            sbom_outcome=result.sbom_outcome,
         )
+        if result.sbom_outcome is not None:
+            if result.sbom_outcome.error_code is None:
+                logger.info("sbom_available", extra={"scan_id": str(scan_id)})
+            else:
+                logger.warning(
+                    "sbom_failed",
+                    extra={
+                        "scan_id": str(scan_id),
+                        "error_code": result.sbom_outcome.error_code,
+                    },
+                )
         logger.info("scan_completed", extra={"scan_id": str(scan_id)})
     except ScanWorkflowError as error:
         if error.retryable and allow_retry:

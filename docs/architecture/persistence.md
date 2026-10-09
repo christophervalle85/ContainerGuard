@@ -12,9 +12,9 @@ workers save real findings. See [image scanning](scanning.md) and
 ## Architecture
 
 FastAPI routes use a request-scoped synchronous SQLAlchemy session and a small
-repository module for queries. PostgreSQL stores records. Alembic owns schema
-changes. Docker Compose runs PostgreSQL and Redis; the API and worker run
-locally through uv. Full backend containerization is outside this change.
+set of persistence modules for queries. PostgreSQL stores records. Alembic owns schema
+changes. Docker Compose runs PostgreSQL, Redis, and separate API/worker images.
+Host development through uv remains available; see [containers](containers.md).
 
 Local development and CI use PostgreSQL 17, SQLAlchemy with Psycopg, and Alembic.
 Python dependencies are locked in uv.lock. Integration tests use PostgreSQL.
@@ -55,15 +55,26 @@ explicitly fictional. The same vulnerability may appear for multiple packages
 or targets. Deleting a scan may cascade its findings; deleting a referenced
 image is restricted so historical scan associations are not silently lost.
 
+### Artifacts and policies
+
+`sbom_artifacts` stores one final available/failed inventory outcome per scan,
+including original binary bytes and identity/checksum metadata. Policy identities
+have immutable rule versions. Evaluations reference an explicit scan/version
+pair and preserve counts, explanations, and a rule snapshot. Unique constraints
+protect duplicate artifact associations, version numbers, and evaluations.
+See [SBOM artifacts](sboms.md) and [security policies](policies.md) for constraints,
+concurrent write behavior, eligibility, and retrieval contracts.
+
 ## Writes, reads, and errors
 
 Generate the scan UUID and commit a queued Trivy record before submitting its
 ID to Redis. The worker claims the row in a short transaction and performs
 external work after committing. Completion associates the image, inserts
-findings, and marks the scan completed atomically. A failed completion rolls
+findings and the SBOM outcome, and marks the scan completed atomically. A failed completion rolls
 back before a separate failure transaction. No partially populated scan is
 reported as completed. Redis submission and PostgreSQL writes are separate;
-manual recovery handles interrupted queued or running attempts.
+manual recovery handles interrupted queued or running attempts with no saved
+image, findings, or artifact outcome. It never reopens a terminal scan.
 
 Get/list operations query PostgreSQL. Apply severity filtering, ordering,
 counts, limit, and offset in SQL rather than loading all records into Python.
@@ -123,6 +134,6 @@ is needed. The health-only endpoint remains a process liveness check.
 
 ## Deferred work
 
-Full backend containerization, accounts, policies, the
-dashboard, and cloud deployment remain future work. Digest resolution and real
+Accounts, the dashboard, retention management, and cloud deployment remain
+future work. Digest resolution and real
 scanner execution are covered in [image scanning](scanning.md).

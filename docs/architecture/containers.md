@@ -108,6 +108,8 @@ worker logs.
 
 ## Verification
 
+The following containerization checks were recorded on October 8, 2026.
+
 Both images built on Apple Silicon. Inspection confirmed UID 10001, Trivy 0.75.0
 only in the worker, trusted certificates, no development tools, and writable
 fresh/reused cache volumes. A disposable migration-failure exercise blocked
@@ -142,3 +144,21 @@ took 1.15 seconds. These are observations, not minimum resource requirements or
 cold-build benchmarks. Network and image contents affect time, disk, and memory.
 The full host suite passed 398 tests; lint, formatting, Compose validation, and
 whitespace checks also passed. Independent review found no important code defects.
+
+### Artifact and policy integration
+
+On October 9, 2026, a separate disposable Compose project applied both artifact
+and policy migrations, then completed an Alpine 3.20.0 scan using Trivy 0.75.0 on
+linux/amd64. The API image still ran as UID 10001 without Trivy. Downloads matched
+the saved checksum and remained identical after application recreation and an
+explicit stopped-application migration rerun. New policy versions preserved the
+original evaluation; duplicate POSTs returned the same saved result.
+
+A controlled SBOM timeout in a one-off worker process preserved successful
+vulnerability findings without repeating vulnerability collection. Required and
+optional SBOM policies produced different, explained outcomes. Recovery refused
+a completed scan and preserved its artifact/evaluation history; a simulated
+interrupted running record completed under the same ID after guarded recovery.
+The exercise removed only its temporary project's resources. It did not kill a
+live scan or establish automatic recovery. See [SBOMs](sboms.md) and
+[policies](policies.md) for the implemented contracts.

@@ -5,7 +5,8 @@ from accepting an image reference to explaining whether its findings meet a poli
 
 ContainerGuard resolves public Docker Hub tags, scans their `linux/amd64` images
 with Trivy, and stores image identities, findings, scanner metadata, and outcomes
-in PostgreSQL. Saved results are available through the API and survive restarts.
+in PostgreSQL. It also saves downloadable CycloneDX SBOMs and evaluates completed
+scans against versioned security policies. Saved results survive restarts.
 
 Submitting an image queues a background scan through Redis and RQ. A separate
 worker runs Trivy while the API stays available. New findings responses use
@@ -124,6 +125,14 @@ endpoint, click **Try it out**, fill in the request, and click **Execute**.
 | GET | `/api/v1/scans` | Browse scan history, newest submissions first |
 | GET | `/api/v1/scans/{scan_id}` | Retrieve one scan |
 | GET | `/api/v1/scans/{scan_id}/findings` | Browse or filter saved findings |
+| GET | `/api/v1/scans/{scan_id}/sbom/metadata` | Check SBOM availability and identity |
+| GET | `/api/v1/scans/{scan_id}/sbom` | Download the saved SBOM |
+| POST | `/api/v1/policies` | Create a named policy and its first version |
+| GET | `/api/v1/policies` | Browse policies |
+| POST | `/api/v1/policies/{policy_id}/versions` | Save a new version of the rules |
+| GET | `/api/v1/policies/{policy_id}/versions` | Browse version history |
+| POST | `/api/v1/scans/{scan_id}/evaluations` | Evaluate an explicit policy version |
+| GET | `/api/v1/scans/{scan_id}/evaluations` | Browse saved decisions and reasons |
 
 Submit this JSON to `POST /api/v1/scans`:
 
@@ -161,6 +170,104 @@ The optional severity filter accepts `CRITICAL`, `HIGH`, `MEDIUM`, `LOW`, or
 `UNKNOWN`. Filtering happens before pagination, and `total` counts matching
 findings. An empty filtered page can mean there are no findings at that severity.
 Check the scan status to distinguish a pending or failed attempt from a completed one.
+
+## Download an SBOM
+
+An SBOM is an inventory of software Trivy detected in the submitted image.
+After collecting vulnerabilities, the worker makes a separate CycloneDX 1.7
+inventory for the same pinned image digest and `linux/amd64` platform. Findings
+remain the source for vulnerability counts; the SBOM does not duplicate them.
+The scan stays `running` until both stages have settled.
+
+Check `GET /api/v1/scans/{scan_id}/sbom/metadata`. Its status is:
+
+- `pending`: the scan is queued or running.
+- `available`: a validated artifact was saved, with its size and SHA-256 checksum.
+- `failed`: SBOM generation or validation failed; safe error details explain why.
+- `not_generated`: no artifact outcome was saved, including older scans and scans
+  that failed before reaching this stage.
+
+To download one, replace SCAN_UUID with a completed scan's ID:
+
+```bash
+curl --fail --silent --show-error \
+  http://127.0.0.1:8000/api/v1/scans/SCAN_UUID/sbom \
+  -o /tmp/containerguard-sbom.json
+shasum -a 256 /tmp/containerguard-sbom.json
+```
+
+The checksum should match the metadata response. Downloads preserve the original
+bytes, use a UUID-based attachment filename, and include a checksum-derived ETag.
+The server checks stored size, checksum, and image association before returning
+an artifact. A checksum helps detect changed bytes; it is not a signature or proof
+that the inventory is complete. Validation checks the supported Trivy output and
+image identity, rather than every rule in the CycloneDX schema.
+
+SBOM generation has its own 60-second limit, 10 MiB output limit, and 64 KiB
+stderr limit. An expected SBOM failure preserves successful vulnerability
+findings and lets the scan complete. It does not rerun the vulnerability scan.
+Database write failures can still prevent saving results. The 10 MiB ceiling
+applies to each artifact; it does not cap total PostgreSQL storage. There is no
+retention job, artifact replacement, or backfill endpoint yet. Submit a fresh
+scan to collect a new inventory.
+
+## Evaluate a security policy
+
+A policy gives a scan a set of explicit acceptance rules. It explains a decision;
+it does not deploy the image or establish that the image is secure.
+In the API docs, submit this body to `POST /api/v1/policies`:
+
+```json
+{
+  "name": "release-policy",
+  "rules": {
+    "max_critical": 0,
+    "max_high": 5,
+    "require_sbom": true,
+    "unknown_severity_action": "fail"
+  }
+}
+```
+
+Keep the returned `policy_id` and `policy_version_id`. All four rules are required.
+Thresholds must be integers from 0 through 2147483647; numeric strings and booleans
+are rejected. `require_sbom` must be a boolean, and UNKNOWN action is exactly
+`fail` or `ignore`. Extra fields are rejected to catch misspelled rules. Names
+are trimmed, case-sensitive, unique, and limited to 100 characters.
+
+For a completed real Trivy scan, use `POST /api/v1/scans/{scan_id}/evaluations`
+with the version UUID you received:
+
+```json
+{"policy_version_id": "REPLACE_WITH_POLICY_VERSION_UUID"}
+```
+
+The response includes the rule snapshot, severity counts, and a reason for each
+rule. Counts equal to a maximum pass. Counts measure saved finding occurrences,
+so the same CVE affecting two package occurrences counts twice. MEDIUM and LOW
+are reported but have no threshold in this version. UNKNOWN is always counted;
+`ignore` lets that rule pass without hiding those findings.
+
+An available, integrity-checked SBOM satisfies `require_sbom`. A missing or
+failed SBOM fails that rule when required, while an optional SBOM can allow the
+vulnerability rules to pass. Corrupted stored evidence produces an `error`
+outcome instead of a policy rejection. Failed, unfinished, and fictional scans
+cannot be evaluated as real evidence.
+
+A successful evaluation request returns HTTP 200 with outcome `passed`, `failed`,
+or `error`. `failed` means the image did not meet the rules; the request itself
+worked. Repeating POST for the same scan and version returns the original saved
+evaluation, including its ID and timestamp. GET on the evaluations endpoint
+retrieves that history without creating a decision.
+
+To change a policy, POST a new `rules` object to
+`/api/v1/policies/{policy_id}/versions`. This creates a new version; it does not
+edit the old rules or decisions. Evaluation always requires an explicit version
+UUID, so creating stricter rules cannot silently change an earlier result.
+Saved error outcomes are final too. A fresh scan supplies new evidence.
+Policies, versions, and evaluations use the same pagination conventions as scan
+history. The [policy notes](docs/architecture/policies.md) and
+[SBOM notes](docs/architecture/sboms.md) cover the storage and validation details.
 
 ## Direct scans for debugging
 
@@ -254,9 +361,19 @@ produced an end-of-support warning. Counts may change as scanner databases updat
 routine tests use fixtures rather than asserting live counts. The
 [scanning notes](docs/architecture/scanning.md) explain the storage decisions.
 
+On October 9, 2026, a separate disposable Compose stack verified CycloneDX 1.7
+output from Trivy 0.75.0 for Alpine 3.20.0 on `linux/amd64`. Its 25,482-byte SBOM
+survived application recreation with the same checksum. The scan had 2 CRITICAL,
+21 HIGH, 20 MEDIUM, 27 LOW, and 0 UNKNOWN findings. Thresholds matching those
+observed counts passed; a stricter policy version rejected the same scan without
+changing the earlier evaluation. A controlled SBOM timeout preserved all findings:
+a required-SBOM policy failed, and an optional-SBOM version passed. Migration
+reruns and simulated interruption recovery also preserved the tested history.
+These are observations from that run, not fixed expectations for future scans.
+
 ## API validation and errors
 
-For POST, image references must be strings with 1–512 characters after trimming surrounding
+For scan submissions, image references must be strings with 1–512 characters after trimming surrounding
 whitespace. This is basic input validation; it does not yet validate the full
 container reference syntax or check that an image exists.
 
@@ -273,6 +390,13 @@ is reachable, that queued attempt is marked failed with `enqueue_failed`.
 A scan accepted with 202 can still fail later in the worker. Read its status and
 safe `error_details`; acceptance does not mean the image has been scanned.
 
+SBOM download returns 409 while a scan is unfinished, 404 when no artifact is
+available, and a safe 500 if stored artifact integrity checks fail. The metadata
+endpoint distinguishes failed generation from an artifact that was never made.
+Unknown policies or versions return 404; duplicate policy names and ineligible
+scan evaluations return 409. Invalid policy rules return 422. Database outages
+return 503 rather than a fabricated policy decision.
+
 ### Saved history and restarts
 
 Submit a scan and keep its ID. Retrieve the scan and findings, then recreate the
@@ -282,7 +406,7 @@ application containers without deleting their volumes:
 docker compose --env-file .env up -d --force-recreate api worker
 ```
 
-Both GET endpoints should still return the saved data. For host-based development,
+The scan, findings, SBOM bytes, and saved evaluations should still be available. For host-based development,
 stop and restart the API process instead. You can also restart PostgreSQL:
 
 ```bash
@@ -299,7 +423,7 @@ named volume. Stopping or removing its container keeps that volume:
 docker compose --env-file .env --profile test down
 ```
 
-**To deliberately delete all local development scan history**, remove the volume:
+**To deliberately delete all local development history, SBOMs, policies, and evaluations**, remove the volume:
 
 ```bash
 docker compose --env-file .env --profile test down --volumes
@@ -351,7 +475,7 @@ writes during a hard crash. There is no automatic reconciliation yet.
 Stop **all** scan workers and confirm their job children and scanner subprocesses
 have stopped. Keep them stopped throughout recovery, and run one recovery
 command at a time. Inspect the scan ID first: recovery accepts only queued or
-running Trivy attempts with no saved image or findings.
+running Trivy attempts with no saved image, findings, or SBOM outcome.
 
 For the container setup:
 
@@ -472,7 +596,8 @@ uv run --locked ruff format --check .
 ```
 
 Tests cover the API, registry responses, bounded subprocesses, Trivy parsing,
-optional database metadata, migrations, transactional writes, and safe failures.
+optional database metadata, SBOM validation and storage, policy rules, immutable
+versions and evaluations, concurrent writes, migrations, and safe failures.
 Routine checks use fixtures and local stand-in executables; they do not need
 Trivy installed or public registry access. TEST_REDIS_URL must point to a
 dedicated Redis test service. TEST_DATABASE_URL must point to containerguard_test;
@@ -496,13 +621,16 @@ That exercise is recorded in [PR #1](https://github.com/christophervalle85/Conta
 
 ## Where things live
 
-- `app/main.py`: the FastAPI application and API routes.
+- `app/main.py`: the FastAPI application, scan routes, and router registration.
+- `app/api/`: scan, SBOM, policy, and evaluation HTTP contracts and routes.
 - `app/api/schemas.py`: request and response models, scan states, and severities.
 - `app/persistence/database.py`: database engine and request session lifecycle.
-- `app/persistence/models.py`: Image, Scan, and Finding database models.
-- `app/persistence/repository.py`: database writes, reads, filtering, and pagination.
+- `app/persistence/models.py`: image, scan, finding, artifact, policy, version, and evaluation models.
+- `app/persistence/repository.py`: scan writes, reads, filtering, and pagination.
+- `app/persistence/artifacts.py`, `policies.py`, and `evaluations.py`: focused persistence services.
+- `app/policies/`: validated policy types and a pure rule evaluator.
 - `app/registries/`: Docker Hub requests and image digest resolution.
-- `app/scanning/trivy/`: Trivy execution, output limits, and report parsing.
+- `app/scanning/trivy/`: bounded vulnerability/SBOM execution and output validation.
 - `app/scanning/workflow.py`: coordinates real scans and saves their outcomes.
 - `app/jobs/`: Redis connections, submission, worker entry point, and manual recovery.
 - `migrations/` and `alembic.ini`: database schema migrations.
@@ -513,6 +641,7 @@ That exercise is recorded in [PR #1](https://github.com/christophervalle85/Conta
 - `docs/architecture/persistence.md`: storage design and decisions.
 - `docs/architecture/scanning.md`: scanning decisions, current limits, and live test notes.
 - `docs/architecture/jobs.md`: queue lifecycle, retries, and recovery decisions.
+- `docs/architecture/sboms.md` and `policies.md`: artifact and policy behavior.
 - `app/scanning/mock_scanner.py`: fictional findings retained for legacy records and tests.
 - `tests/`: unit tests and isolated PostgreSQL/Redis integration tests.
 - `pyproject.toml`: dependencies and settings for pytest and Ruff.
@@ -526,5 +655,6 @@ uv recreates the local environment from the committed dependency files.
 
 ## Next steps
 
-The backend runs through Compose. Policy evaluation and a dashboard are still
-ahead; interrupted-job reconciliation and deployment hardening remain future work.
+The backend now includes SBOM downloads and policy evaluation through the API.
+A dashboard, accounts, automatic interrupted-job reconciliation, and deployment
+hardening remain future work.
