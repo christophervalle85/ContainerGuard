@@ -129,3 +129,79 @@ jobs:
 
       - name: Run browser workflows
         run: npm run test:e2e
+
+  dependencies:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository and reachable history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install checksum-verified security tools
+        run: |
+          bash scripts/install_security_tools.sh "$RUNNER_TEMP/security-bin"
+          echo "$RUNNER_TEMP/security-bin" >> "$GITHUB_PATH"
+
+      - name: Scan reachable history for secrets
+        run: gitleaks git . --config security/gitleaks.toml --redact=100 --no-banner
+
+      - name: Scan locked dependencies and apply vulnerability gate
+        run: >-
+          python3 -m scripts.scan_security --kind filesystem --input . --target .
+          --expected-target uv.lock --expected-target frontend/package-lock.json
+          --output-dir security-reports/dependencies
+
+      - name: Retain validated dependency reports
+        if: ${{ !cancelled() && hashFiles('security-reports/dependencies/summary.json') != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dependency-security
+          path: security-reports/dependencies/*.json
+          retention-days: 7
+          if-no-files-found: error
+
+  containers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [api, worker, frontend]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install checksum-verified security tools
+        run: |
+          bash scripts/install_security_tools.sh "$RUNNER_TEMP/security-bin"
+          echo "$RUNNER_TEMP/security-bin" >> "$GITHUB_PATH"
+
+      - name: Build runtime image
+        env:
+          SERVICE: ${{ matrix.service }}
+        run: |
+          context=.
+          if [ "$SERVICE" = frontend ]; then context=frontend; fi
+          docker build --platform linux/amd64 -f "Dockerfile.$SERVICE" -t "containerguard-$SERVICE:security" "$context"
+
+      - name: Scan runtime image and apply vulnerability gate
+        env:
+          SERVICE: ${{ matrix.service }}
+        run: >-
+          python3 -m scripts.scan_security --kind image
+          --input "containerguard-$SERVICE:security" --target "containerguard-$SERVICE:security"
+          --output-dir "security-reports/$SERVICE"
+
+      - name: Retain validated runtime reports
+        if: ${{ !cancelled() && hashFiles(format('security-reports/{0}/summary.json', matrix.service)) != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: runtime-security-${{ matrix.service }}
+          path: security-reports/${{ matrix.service }}/*.json
+          retention-days: 7
+          if-no-files-found: error

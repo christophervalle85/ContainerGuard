@@ -47,7 +47,7 @@ def test_database_failure_returns_safe_service_unavailable(
 ) -> None:
     with TestClient(app, raise_server_exceptions=False) as client:
         kwargs = (
-            {"json": {"image_reference": "demo/image:offline"}}
+            {"json": {"image_reference": "docker.io/demo/image:offline"}}
             if method == "POST"
             else {}
         )

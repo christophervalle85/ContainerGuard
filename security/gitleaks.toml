@@ -1,0 +1,4 @@
+title = "ContainerGuard secret scanning"
+
+[extend]
+useDefault = true

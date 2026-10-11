@@ -2,7 +2,12 @@
 
 from app.scanning.trivy.process_runner import ProcessExecutionError, run_bounded_command
 from app.scanning.trivy.runner import build_trivy_command
-from app.scanning.trivy.sbom import MAX_SBOM_BYTES, SbomOutcome, parse_sbom
+from app.scanning.trivy.sbom import (
+    MAX_SBOM_BYTES,
+    SUPPORTED_SCANNER_VERSIONS,
+    SbomOutcome,
+    parse_sbom,
+)
 
 _PROCESS_ERRORS = {
     "timeout": "sbom_timeout",
@@ -35,7 +40,7 @@ def build_sbom_command(pinned_reference: str) -> list[str]:
 def collect_sbom(
     pinned_reference: str, *, platform: str, scanner_version: str
 ) -> SbomOutcome:
-    if platform != "linux/amd64" or scanner_version != "0.75.0":
+    if platform != "linux/amd64" or scanner_version not in SUPPORTED_SCANNER_VERSIONS:
         raise ValueError("Unsupported SBOM platform or scanner version")
     command = build_sbom_command(pinned_reference)
     try:

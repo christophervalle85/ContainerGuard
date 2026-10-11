@@ -306,14 +306,14 @@ def test_retrieval_contract_documents_not_found(path: str) -> None:
 
 def test_api_submission_is_committed_to_postgresql(api_database: Engine) -> None:
     response = client.post(
-        "/api/v1/scans", json={"image_reference": "demo/image:persisted"}
+        "/api/v1/scans", json={"image_reference": "docker.io/demo/image:persisted"}
     )
     assert response.status_code == 202
     scan_id = UUID(response.json()["scan_id"])
     with Session(api_database) as session:
         scan = session.get(Scan, scan_id)
         assert scan is not None
-        assert scan.submitted_reference == "demo/image:persisted"
+        assert scan.submitted_reference == "docker.io/demo/image:persisted"
         assert (
             session.scalar(
                 select(func.count())

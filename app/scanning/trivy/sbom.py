@@ -7,6 +7,8 @@ import re
 from dataclasses import dataclass
 from urllib.parse import parse_qsl, unquote, urlsplit
 
+SUPPORTED_SCANNER_VERSIONS = frozenset({"0.75.0", "0.75.0+cg.1"})
+
 MAX_SBOM_BYTES = 10 * 1024 * 1024
 _HUB_HOSTS = {"docker.io", "index.docker.io", "registry-1.docker.io"}
 
@@ -113,7 +115,9 @@ def _validate_package_url(value: object, expected: tuple[str, str]) -> None:
         raise ValueError
 
 
-def _validate_identity(metadata: dict, expected: tuple[str, str]) -> None:
+def _validate_identity(
+    metadata: dict, expected: tuple[str, str], scanner_version: str
+) -> None:
     component = _object(metadata.get("component"))
     if component.get("type") != "container":
         raise ValueError
@@ -134,7 +138,7 @@ def _validate_identity(metadata: dict, expected: tuple[str, str]) -> None:
         for item in tools
         if (tool := _object(item)).get("name") == "trivy"
     ]
-    if not versions or any(version != "0.75.0" for version in versions):
+    if not versions or any(version != scanner_version for version in versions):
         raise ValueError
 
 
@@ -159,7 +163,10 @@ def parse_sbom(
     try:
         if not isinstance(payload, bytes) or len(payload) > MAX_SBOM_BYTES:
             raise ValueError
-        if platform != "linux/amd64" or scanner_version != "0.75.0":
+        if (
+            platform != "linux/amd64"
+            or scanner_version not in SUPPORTED_SCANNER_VERSIONS
+        ):
             raise ValueError
         expected = _reference_identity(pinned_reference, allow_short=False)
         document = _object(
@@ -174,7 +181,7 @@ def parse_sbom(
             raise ValueError
         if document.get("specVersion") != "1.7":
             raise ValueError
-        _validate_identity(_object(document.get("metadata")), expected)
+        _validate_identity(_object(document.get("metadata")), expected, scanner_version)
         _validate_inventory(document.get("components"))
     except ValueError, RecursionError, OverflowError:
         raise ValueError("Invalid CycloneDX SBOM") from None

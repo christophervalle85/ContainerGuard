@@ -16,8 +16,8 @@ and persistence behavior are the same as in host-based development.
 
 The separate worker image contains Trivy; the API image does not. Both contain
 Python 3.14.7 and the same locked runtime dependencies. Multi-stage builds use
-uv 0.12.21 with `uv sync --locked --no-dev --no-install-project`. Python, uv, and
-Trivy image artifacts are pinned by digest in the Dockerfiles. PostgreSQL and
+uv 0.12.21 with `uv sync --locked --no-dev --no-install-project`. Python and uv image artifacts are pinned by digest in the Dockerfiles.
+Trivy is built from checksum-pinned upstream source with a pinned Go builder. PostgreSQL and
 Redis use the release tags in Compose; those tags are not immutable digests.
 
 The build context allows only runtime inputs and build definitions. Git metadata,
@@ -28,7 +28,8 @@ Source is copied during the build rather than mounted from the host.
 Both application images run as UID/GID 10001. Source and dependencies remain
 root-owned and readable by the application user. The worker owns its cache
 mount point at `/var/cache/trivy`; its normal execution does not require root.
-The Debian runtime provides trusted certificates for HTTPS requests.
+The Alpine runtime provides trusted certificates for HTTPS requests. Runtime pip
+is removed; locked application dependencies remain in `/app/.venv`.
 
 Images build natively on the developer's architecture. Trivy still examines the
 resolved remote `linux/amd64` image; the worker itself need not run under amd64
@@ -182,3 +183,42 @@ uses relative API URLs, so database/Redis credentials and Docker hostnames stay
 outside the shipped assets. No CORS relaxation or Docker socket mount is added.
 
 See [frontend architecture](frontend.md) for browser behavior and verification.
+
+## Resource bounds and scanner maintenance
+
+Compose applies these bounds to the supported local deployment:
+
+| Service | CPUs | Memory | PIDs |
+| --- | ---: | ---: | ---: |
+| Frontend | 0.5 | 128 MiB | 64 |
+| API and migration | 1 | 512 MiB | 128 |
+| Worker | 2 | 2 GiB | 256 |
+| Redis | 0.5 | 256 MiB | 64 |
+
+Redis uses `maxmemory 128mb`, `noeviction`, and AOF persistence. Memory pressure
+rejects new writes rather than silently evicting queued jobs. These limits do not
+bound PostgreSQL history, Redis AOF files, scanner cache, Docker layers, or disk
+usage. Monitor disk space and manage retention separately. One normal worker
+executes one job at a time; adding workers changes memory needs and cache sharing.
+There is no distributed execution semaphore.
+
+On October 11, 2026, Docker inspection confirmed these applied CPU/memory/PID
+limits and Redis settings. A real cold-cache Alpine scan completed under them.
+Sampled memory maxima were 103.5 MiB API, 274.5 MiB worker, 12.34 MiB Redis, and
+25.32 MiB frontend. These five samples are observations rather than continuous
+peak measurements or production sizing. The worker limit leaves room for its
+scanner subprocesses, but larger images can need more resources.
+
+The worker ships `0.75.0+cg.1`: Trivy 0.75.0 source commit
+`591e9799316a602e703f0b484f6c6d7b234ec8f3`, rebuilt with Go 1.27.2 and
+`golang.org/x/net` 0.60.0. CI exports the same Docker build stage for its scanner.
+This small downstream build removes findings in the upstream binary; it must be
+maintained and rechecked when upstream or Go changes. SBOM parsing accepts the
+reviewed original and patched versions, and requires the artifact's reported
+version to match the scan. The frontend runtime updates its TIFF/zlib packages
+during build and is scanned afterward. Rebuilds can therefore change with the
+package repository; every runtime image must pass its current gate.
+
+Native ARM64 API/worker builds and worker imports/version checks passed. The full
+isolated runtime exercise used linux/amd64 images on Apple Silicon. Current
+results and evidence limits are in [verification](../development/verification.md).

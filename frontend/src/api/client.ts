@@ -21,6 +21,7 @@ const errorMessages: Record<number, string> = {
   404: 'The requested record or artifact was not found.',
   409: 'This request conflicts with the current record. Check its status and try again.',
   422: 'Check the request fields and try again.',
+  429: 'The scan queue is full. Try again shortly.',
   502: 'The service is temporarily unavailable. Try again later.',
   503: 'The service is temporarily unavailable. Try again later.',
   504: 'The service is temporarily unavailable. Try again later.',

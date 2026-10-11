@@ -139,3 +139,24 @@ these tests did not create public-network failures.
 An active real scan also completed before the learner's graceful worker stop
 returned. This establishes the observed normal-stop behavior; it does not add
 a guarantee for engine crashes, forced stops, or cross-service write failures.
+
+## Admission and interrupted-job disclosure
+
+Both synchronous and queued real-scan creation reserve capacity in their insert
+transaction. `MAX_ACTIVE_SCANS` defaults to 20 and accepts 1–1000. A transaction
+advisory lock serializes admissions; the count uses READ COMMITTED, so a waiting
+request sees earlier committed inserts. Other isolation levels are rejected.
+Lock acquisition has a two-second timeout. Capacity rejection returns 429 and
+`Retry-After: 30`; contention returns 503. Neither creates a scan or RQ job.
+
+Queued/running Trivy rows count, including retry delays and interrupted jobs.
+Terminal and mock rows do not. Recovery reuses the existing slot. The existing
+commit-before-enqueue gap remains possible, and keeps a slot until inspected.
+Do not release slots by deleting evidence or expiring a timer while work may run.
+
+Unexpected task errors are replaced with a fixed `RuntimeError` without the
+original exception context before reaching RQ. The RQ job still fails; PostgreSQL
+remains the outcome to inspect, and an interrupted active row can need recovery.
+Tests inspect actual RQ result tracebacks and captured logs with credential
+sentinels. Classified workflow failures and their bounded retries retain their
+existing behavior. Application logging is still not a general-purpose redactor.

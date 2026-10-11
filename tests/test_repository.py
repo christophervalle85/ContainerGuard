@@ -167,10 +167,10 @@ def test_scan_findings_filter_before_pagination_and_stay_with_their_scan(
     with isolated_repository_engine() as engine:
         with Session(engine) as session:
             accepted = repository.create_scan(
-                session, ScanSubmission(image_reference="demo/image:first")
+                session, ScanSubmission(image_reference="docker.io/demo/image:first")
             )
             repository.create_scan(
-                session, ScanSubmission(image_reference="demo/image:second")
+                session, ScanSubmission(image_reference="docker.io/demo/image:second")
             )
         with Session(engine) as session:
             page = repository.get_scan_findings(

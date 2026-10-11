@@ -14,6 +14,23 @@ Submitting an image queues a background scan through Redis and RQ. A separate
 worker runs Trivy while the API stays available. New findings responses use
 `mock: false`; older fictional records remain identifiable with `mock: true`.
 
+## How the pieces fit
+
+```mermaid
+flowchart LR
+    Browser[React dashboard / Nginx] --> API[FastAPI]
+    API --> DB[(PostgreSQL)]
+    API --> Queue[(Redis / RQ)]
+    Queue --> Worker[RQ worker]
+    Worker --> Registry[Docker Hub]
+    Worker --> Trivy[Trivy: vulnerabilities + SBOM]
+    Worker --> DB
+```
+
+The API accepts work; the worker does the scanning. PostgreSQL keeps the evidence
+and saved policy decisions. Try the [demo walkthrough](docs/demo.md) for a short
+end-to-end tour.
+
 ## Run it locally
 
 For the container setup, you only need Git and Docker with Compose. Start the
@@ -53,7 +70,7 @@ longer while Trivy downloads its vulnerability database into the worker's named
 cache volume. Internet access is needed for image resolution and scanner updates.
 
 The API image contains Python and the locked application dependencies. The worker
-also contains Trivy 0.75.0. Both run as UID/GID 10001, and neither mounts Docker's
+also contains the patched Trivy build `0.75.0+cg.1`. Both run as UID/GID 10001, and neither mounts Docker's
 socket. Submitted images are inspected remotely, without running them.
 Application code is copied during the build, so rebuild after changing it.
 
@@ -73,6 +90,24 @@ Published frontend, API, database, and Redis ports bind to localhost. If a port 
 change `FRONTEND_PORT`, `API_PORT`, `POSTGRES_PORT`, or `REDIS_PORT`. Update host URLs alongside
 changed database/Redis ports; container URLs keep their internal ports. Test
 services use separate ports 5434 and 6381 and dedicated storage.
+
+### Submission limits
+
+Submit an explicit Docker Hub tag such as `docker.io/library/alpine:3.20.0`.
+`docker.io/alpine:3.20.0` is also supported. Other registries, credentials, URLs,
+digest inputs, and missing tags receive 422 before a scan is saved.
+
+`MAX_ACTIVE_SCANS` defaults to 20 (allowed range 1–1000). It counts queued and
+running real scans, including delayed retries and interrupted attempts. At the
+limit, submission returns 429 with `Retry-After: 30`, without creating a row or
+job. That header is a retry hint. The dashboard explains the rejection and does
+not repeat the submission automatically.
+
+Admission is serialized in PostgreSQL across application processes. The normal
+Compose setup executes one job at a time in one worker. Interrupted attempts keep
+their slot until you inspect and recover them; see [recovery](#recover-an-interrupted-scan)
+and the [job lifecycle](docs/architecture/jobs.md). Database lock contention and
+queue outages return safe 503 responses.
 
 ### Update an existing installation
 
@@ -666,6 +701,44 @@ not submit real scans. GitHub Actions runs a separate frontend job alongside the
 backend checks. Component and browser tests complement live Compose verification;
 they do not establish production capacity or a complete accessibility audit.
 
+### Security checks
+
+CI also scans reachable Git history with Gitleaks, both lockfiles (including
+development dependencies), and the three built `linux/amd64` runtime images.
+HIGH and CRITICAL findings block the gate, including unfixed findings. Scanner
+errors, missing targets, and malformed reports fail the job. Valid vulnerability
+reports are retained for seven days; secret reports are not uploaded.
+
+On a Linux amd64 machine with Docker and Python 3:
+
+```bash
+bash scripts/install_security_tools.sh /tmp/containerguard-security-bin
+export PATH="/tmp/containerguard-security-bin:$PATH"
+gitleaks git . --config security/gitleaks.toml --redact=100 --no-banner
+python3 -m scripts.scan_security --kind filesystem --input . --target . \
+  --expected-target uv.lock --expected-target frontend/package-lock.json \
+  --output-dir /tmp/containerguard-security-dependencies
+docker build --platform linux/amd64 -f Dockerfile.api -t containerguard-api:security .
+python3 -m scripts.scan_security --kind image --input containerguard-api:security \
+  --target containerguard-api:security --output-dir /tmp/containerguard-security-api
+```
+
+Repeat the image commands for `worker`; for `frontend`, use `Dockerfile.frontend`
+with build context `frontend`. CI contains the complete matrix. The installer
+builds Trivy from checksum-pinned source with reviewed Go patches; its first
+build needs internet access and can take several minutes. The API and worker use
+lean Alpine Python runtimes, with build tools and pip excluded from the runtime.
+
+`security/exceptions.json` is empty. Any future exception must identify the exact
+finding, package, and image/lockfile scan target, give an owner and review reason,
+and expire within 30 days. Invalid or expired exceptions fail the gate. These
+release checks are separate from the policies users apply to submitted images.
+Builder stages and PostgreSQL/Redis service images are outside the runtime-image
+gate. Localhost binding and containers do not supply authentication or guarantee
+that an image is safe. See [security boundaries](docs/architecture/security.md)
+and the [verification record](docs/development/verification.md) for scope and
+remaining checks.
+
 ## Where things live
 
 - `app/main.py`: the FastAPI application, scan routes, and router registration.
@@ -698,6 +771,10 @@ they do not establish production capacity or a complete accessibility audit.
 - `uv.lock`: exact dependency versions used to recreate the environment.
 - `.python-version`: the project's Python version.
 - `.github/workflows/ci.yml`: the automated GitHub checks.
+- `scripts/` and `security/`: fail-closed vulnerability gate, pinned tools, and exceptions.
+- `app/persistence/admission.py`: atomic outstanding-scan capacity.
+- `docs/development/verification.md`: measured local evidence and pending CI verification.
+- `docs/demo.md` and `docs/images/`: walkthrough and screenshots of real results.
 - `.env.example`: local demonstration database and queue configuration.
 
 Commit the lockfile. Keep `.venv`, caches, and real credentials out of Git.

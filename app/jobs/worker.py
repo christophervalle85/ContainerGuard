@@ -7,6 +7,7 @@ from rq import SpawnWorker
 
 from app.jobs.connection import get_redis_connection, get_scan_queue
 from app.logging_config import configure_logging
+from app.persistence.admission import get_max_active_scans
 
 
 def main() -> None:
@@ -17,6 +18,7 @@ def main() -> None:
         help="Process waiting jobs, then exit when the queue is empty",
     )
     args = parser.parse_args()
+    get_max_active_scans()
     configure_logging()
 
     with get_redis_connection() as connection:

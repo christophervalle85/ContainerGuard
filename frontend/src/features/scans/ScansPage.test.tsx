@@ -99,6 +99,30 @@ async function enterImage(value = 'docker.io/library/alpine:3.20.0') {
 }
 
 describe('scan submission', () => {
+  it('rejects unsupported references without sending a POST', async () => {
+    const fetcher = server();
+    open();
+    const user = await enterImage('ghcr.io/org/image:tag');
+    await user.click(screen.getByRole('button', { name: 'Submit scan' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Docker Hub/);
+    expect(
+      fetcher.mock.calls.filter(([, options]) => options.method === 'POST'),
+    ).toHaveLength(0);
+  });
+  it('explains confirmed queue rejection without suggesting it was saved', async () => {
+    const fetcher = server(() => json({ detail: 'private diagnostic' }, 429));
+    open();
+    const user = await enterImage();
+    await user.click(screen.getByRole('button', { name: 'Submit scan' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      /queue is full/i,
+    );
+    expect(screen.queryByText(/may have been saved/)).not.toBeInTheDocument();
+    expect(
+      fetcher.mock.calls.filter(([, options]) => options.method === 'POST'),
+    ).toHaveLength(1);
+  });
+
   it('labels the input, states supported scope, and navigates using the accepted UUID', async () => {
     const fetcher = server();
     open();
@@ -160,7 +184,7 @@ describe('scan submission', () => {
               loc: ['body', 'image_reference'],
               msg: 'secret server diagnostic',
               type: 'value_error',
-              input: 'bad image',
+              input: 'docker.io/library/alpine:3.20.0',
             },
           ],
         },
@@ -168,12 +192,12 @@ describe('scan submission', () => {
       ),
     );
     open();
-    const user = await enterImage('bad image');
+    const user = await enterImage('docker.io/library/alpine:3.20.0');
     await user.click(screen.getByRole('button', { name: 'Submit scan' }));
     await screen.findByRole('alert');
     expect(
       screen.getByRole('textbox', { name: 'Image reference' }),
-    ).toHaveValue('bad image');
+    ).toHaveValue('docker.io/library/alpine:3.20.0');
     expect(
       screen.getByRole('textbox', { name: 'Image reference' }),
     ).toHaveAttribute('aria-invalid', 'true');

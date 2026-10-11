@@ -256,3 +256,20 @@ def test_outcome_accepts_one_available_artifact_or_one_failure():
     artifact = parse()
     assert SbomOutcome(artifact, None).artifact is artifact
     assert SbomOutcome(None, "sbom_timeout").error_code == "sbom_timeout"
+
+
+def test_patched_scanner_sbom_preserves_its_exact_version():
+    value = document()
+    value["metadata"]["tools"]["components"][0]["version"] = "0.75.0+cg.1"
+    artifact = parse(encoded(value), scanner_version="0.75.0+cg.1")
+    assert artifact.scanner_version == "0.75.0+cg.1"
+
+
+@pytest.mark.parametrize("expected", ["0.75.0", "0.75.0+cg.1"])
+def test_sbom_tool_version_must_match_the_scan_version(expected):
+    value = document()
+    value["metadata"]["tools"]["components"][0]["version"] = (
+        "0.75.0+cg.1" if expected == "0.75.0" else "0.75.0"
+    )
+    with pytest.raises(ValueError):
+        parse(encoded(value), scanner_version=expected)
