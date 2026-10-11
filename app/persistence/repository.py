@@ -11,6 +11,7 @@ from app.api.schemas import (
 from app.api.schemas import (
     FindingPage,
     ScanAccepted,
+    ScanDetails,
     ScanHistory,
     ScanRecord,
     ScanSubmission,
@@ -77,16 +78,30 @@ def create_scan(session: Session, submission: ScanSubmission) -> ScanAccepted:
     )
 
 
-def get_scan(session: Session, scan_id: UUID) -> ScanRecord | None:
-    scan = session.get(Scan, scan_id)
-
-    if scan is None:
+def get_scan(session: Session, scan_id: UUID) -> ScanDetails | None:
+    statement = (
+        select(Scan, Image)
+        .outerjoin(Image, Scan.image_id == Image.id)
+        .where(Scan.id == scan_id)
+    )
+    record = session.execute(statement).first()
+    if record is None:
         return None
-
-    return ScanRecord(
+    scan, image = record
+    return ScanDetails(
         scan_id=scan.id,
         image_reference=scan.submitted_reference,
         status=scan.status,
+        created_at=scan.created_at,
+        started_at=scan.started_at,
+        completed_at=scan.completed_at,
+        digest=image.digest if image else None,
+        platform=image.platform if image else None,
+        scanner_name=scan.scanner_name,
+        scanner_version=scan.scanner_version,
+        scanner_database_metadata=scan.scanner_database_metadata,
+        error_details=scan.error_details,
+        mock=scan.scanner_name is None,
     )
 
 
