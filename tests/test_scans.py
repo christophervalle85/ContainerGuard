@@ -82,7 +82,8 @@ def test_submitted_scan_can_be_retrieved() -> None:
     response = client.get(accepted["status_url"])
 
     assert response.status_code == 200
-    assert response.json() == {
+    body = response.json()
+    assert {key: body[key] for key in ("scan_id", "image_reference", "status")} == {
         "scan_id": accepted["scan_id"],
         "image_reference": "docker.io/library/alpine:3.20",
         "status": "queued",
@@ -333,7 +334,8 @@ def test_api_retrieves_a_scan_created_outside_the_api(api_database: Engine) -> N
         )
     response = client.get(f"/api/v1/scans/{scan_id}")
     assert response.status_code == 200
-    assert response.json() == {
+    body = response.json()
+    assert {key: body[key] for key in ("scan_id", "image_reference", "status")} == {
         "scan_id": str(scan_id),
         "image_reference": "demo/image:stored",
         "status": "failed",

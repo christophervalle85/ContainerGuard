@@ -13,8 +13,8 @@ from app.api.schemas import (
     ErrorResponse,
     FindingPage,
     ScanAccepted,
+    ScanDetails,
     ScanHistory,
-    ScanRecord,
     ScanSubmission,
     Severity,
 )
@@ -84,13 +84,13 @@ def submit_scan(
 
 @app.get(
     "/api/v1/scans/{scan_id}",
-    response_model=ScanRecord,
+    response_model=ScanDetails,
     responses={
         404: {"model": ErrorResponse, "description": "Scan not found"},
         **DATABASE_ERROR_RESPONSES,
     },
 )
-def get_scan(scan_id: UUID, session: DatabaseSession) -> ScanRecord:
+def get_scan(scan_id: UUID, session: DatabaseSession) -> ScanDetails:
     scan = repository.get_scan(session, scan_id)
 
     if scan is None:

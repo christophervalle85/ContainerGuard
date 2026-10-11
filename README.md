@@ -6,7 +6,9 @@ from accepting an image reference to explaining whether its findings meet a poli
 ContainerGuard resolves public Docker Hub tags, scans their `linux/amd64` images
 with Trivy, and stores image identities, findings, scanner metadata, and outcomes
 in PostgreSQL. It also saves downloadable CycloneDX SBOMs and evaluates completed
-scans against versioned security policies. Saved results survive restarts.
+scans against versioned security policies. A React dashboard lets you submit
+scans, review findings, download artifacts, and evaluate explicit policy versions.
+Saved results survive restarts.
 
 Submitting an image queues a background scan through Redis and RQ. A separate
 worker runs Trivy while the API stays available. New findings responses use
@@ -28,7 +30,7 @@ If you already have a `.env`, keep it and add any missing settings from
 `.env.example`. The example credentials are for local demonstrations. Real
 `.env` files are ignored by Git and excluded from the image build context.
 
-Compose builds separate API and worker images, starts PostgreSQL and Redis,
+Compose builds separate frontend, API, and worker images, starts PostgreSQL and Redis,
 and runs `alembic upgrade head` before starting the application services. Check
 startup with:
 
@@ -36,9 +38,14 @@ startup with:
 docker compose --env-file .env ps -a
 ```
 
-Expect `api`, `db`, `redis`, and `worker` to become healthy. The `migrate` service
+Expect `frontend`, `api`, `db`, `redis`, and `worker` to become healthy. The `migrate` service
 should show `Exited (0)`; it has finished its job. A worker health check confirms
 its own registration and recent heartbeat, not that every scan will succeed.
+
+Open the dashboard at <http://127.0.0.1:8080>. Use Scans for submission and
+evidence, and Policies for immutable rule versions. The detail view follows an
+unfinished scan automatically; completion describes processing, while a saved
+policy evaluation explains whether the evidence meets your selected rules.
 
 Open <http://127.0.0.1:8000/health> for `{"status":"ok"}` and
 <http://127.0.0.1:8000/docs> for the interactive API. The first scan can take
@@ -62,8 +69,8 @@ Percent-encode special characters in URL credentials, such as `@` as `%40`.
 Changing `POSTGRES_PASSWORD` does not change a password in an already initialized
 PostgreSQL volume; existing databases need an explicit password change.
 
-Published API, database, and Redis ports bind to localhost. If a port is occupied,
-change `API_PORT`, `POSTGRES_PORT`, or `REDIS_PORT`. Update host URLs alongside
+Published frontend, API, database, and Redis ports bind to localhost. If a port is occupied,
+change `FRONTEND_PORT`, `API_PORT`, `POSTGRES_PORT`, or `REDIS_PORT`. Update host URLs alongside
 changed database/Redis ports; container URLs keep their internal ports. Test
 services use separate ports 5434 and 6381 and dedicated storage.
 
@@ -74,16 +81,36 @@ and explicitly rerun migrations. This sequence does not depend on the exit state
 of an older migration container:
 
 ```bash
-docker compose --env-file .env build api worker
-docker compose --env-file .env stop api worker
+docker compose --env-file .env build frontend api worker
+docker compose --env-file .env stop frontend api worker
 docker compose --env-file .env up -d --wait db redis
 docker compose --env-file .env run --rm --no-deps migrate
-docker compose --env-file .env up -d --force-recreate api worker
+docker compose --env-file .env up -d --force-recreate api worker frontend
 ```
 
 Run the commands one at a time. If migration fails, leave the application stopped
 and investigate before continuing. The initial Compose startup also blocks the
 API and worker if migrations fail.
+
+### Develop the dashboard on the host
+
+Use Node 24 and keep the API/worker containers running. From the repository root:
+
+```bash
+npm --prefix frontend ci
+npm --prefix frontend run dev
+```
+
+Open <http://127.0.0.1:5173>. Vite forwards relative API requests to port 8000.
+Compose serves its separately built dashboard on port 8080; host edits need a
+frontend rebuild to appear there. The [dashboard guide](frontend/README.md)
+covers configuration, screen behavior, browser tests, and troubleshooting.
+
+Scan details check unfinished work three seconds after each successful response,
+stop on an error or after ten minutes, and pause while the tab is hidden.
+Reloading reads the existing scan and starts another observation window; it
+neither submits a job nor cancels one. If a POST response is lost, check saved
+history before submitting again: the original request may have succeeded.
 
 ### Develop with Python on the host
 
@@ -619,6 +646,26 @@ In an earlier CI exercise, I deliberately changed the health response on a test
 branch, watched the pull request's test fail, and restored the response to get a passing run.
 That exercise is recorded in [PR #1](https://github.com/christophervalle85/ContainerGuard/pull/1).
 
+### Frontend checks
+
+With Node 24 selected, run these from the repository root:
+
+```bash
+npm --prefix frontend ci
+npm --prefix frontend run lint
+npm --prefix frontend run format:check
+npm --prefix frontend run typecheck
+npm --prefix frontend test
+npm --prefix frontend run build
+npm --prefix frontend exec -- playwright install chromium
+npm --prefix frontend run test:e2e
+```
+
+Browser tests own port 4173 and intercept API calls with fixed responses. They do
+not submit real scans. GitHub Actions runs a separate frontend job alongside the
+backend checks. Component and browser tests complement live Compose verification;
+they do not establish production capacity or a complete accessibility audit.
+
 ## Where things live
 
 - `app/main.py`: the FastAPI application, scan routes, and router registration.
@@ -635,7 +682,10 @@ That exercise is recorded in [PR #1](https://github.com/christophervalle85/Conta
 - `app/jobs/`: Redis connections, submission, worker entry point, and manual recovery.
 - `migrations/` and `alembic.ini`: database schema migrations.
 - `Dockerfile.api` and `Dockerfile.worker`: separate non-root runtime images.
-- `compose.yaml`: API, worker, migration, database, Redis, and isolated test services.
+- `compose.yaml`: frontend, API, worker, migration, database, Redis, and isolated test services.
+- `frontend/`: React/TypeScript dashboard, locked npm packages, and browser tests.
+- `Dockerfile.frontend`: Node build stage and unprivileged Nginx runtime.
+- `docs/architecture/frontend.md`: browser contracts, polling, and error handling.
 - `app/logging_config.py`: correlated JSON application logs.
 - `docs/architecture/containers.md`: container runtime and operational decisions.
 - `docs/architecture/persistence.md`: storage design and decisions.
@@ -655,6 +705,6 @@ uv recreates the local environment from the committed dependency files.
 
 ## Next steps
 
-The backend now includes SBOM downloads and policy evaluation through the API.
-A dashboard, accounts, automatic interrupted-job reconciliation, and deployment
+The dashboard now covers scans, SBOM downloads, policy versions, and saved
+evaluations. Accounts, automatic interrupted-job reconciliation, and deployment
 hardening remain future work.

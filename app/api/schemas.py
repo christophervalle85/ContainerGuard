@@ -1,3 +1,4 @@
+from datetime import datetime
 from enum import StrEnum
 from uuid import UUID
 
@@ -27,6 +28,19 @@ class ScanRecord(BaseModel):
     scan_id: UUID
     image_reference: str
     status: ScanStatus
+
+
+class ScanDetails(ScanRecord):
+    created_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None
+    digest: str | None
+    platform: str | None
+    scanner_name: str | None
+    scanner_version: str | None
+    scanner_database_metadata: dict | None
+    error_details: str | None
+    mock: bool
 
 
 class ScanHistory(BaseModel):

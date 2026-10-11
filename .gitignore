@@ -9,3 +9,10 @@ htmlcov/
 .env.*
 !.env.example
 .DS_Store
+
+# Frontend dependencies and generated output
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/
+frontend/playwright-report/
+frontend/test-results/

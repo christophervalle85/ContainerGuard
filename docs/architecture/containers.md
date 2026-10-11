@@ -1,12 +1,13 @@
-# Backend containers
+# Application containers
 
-The backend runs through Docker Compose. API responses, scan IDs, retry policy,
+The dashboard and backend run through Docker Compose. API responses, scan IDs, retry policy,
 and persistence behavior are the same as in host-based development.
 
 ## Runtime layout
 
 | Service | Runtime | Responsibility |
 | --- | --- | --- |
+| `frontend` | Nginx image | Serve the React dashboard and proxy API requests |
 | `api` | API image | Serve FastAPI requests and submit background jobs |
 | `worker` | Worker image | Run RQ jobs, resolve image tags, and execute Trivy |
 | `migrate` | API image | Apply Alembic migrations, then exit |
@@ -162,3 +163,22 @@ interrupted running record completed under the same ID after guarded recovery.
 The exercise removed only its temporary project's resources. It did not kill a
 live scan or establish automatic recovery. See [SBOMs](sboms.md) and
 [policies](policies.md) for the implemented contracts.
+
+
+### Dashboard serving
+
+The frontend image has a locked Node 24 build stage and a pinned unprivileged
+Nginx runtime (UID/GID 101). It serves compiled static assets on container port
+8080, published only at localhost:8080 by default. Node and frontend development
+dependencies stay out of the runtime. The frontend uses its own build context;
+the Python context remains restricted to runtime inputs.
+
+Nginx forwards /api/ paths to api:8000 with Docker DNS re-resolution, preserving
+status codes and bodies. Missing assets return 404; UI deep links receive the SPA
+entry point. API failures never fall back to index.html. Static health at
+/healthz does not claim the API or worker is available. Replacing the API does
+not require rebuilding browser assets or restarting the frontend. The browser
+uses relative API URLs, so database/Redis credentials and Docker hostnames stay
+outside the shipped assets. No CORS relaxation or Docker socket mount is added.
+
+See [frontend architecture](frontend.md) for browser behavior and verification.
