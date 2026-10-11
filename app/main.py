@@ -111,7 +111,7 @@ async def handle_queue_error(
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "broken-for-ci-demonstration"}
 
 
 @app.post(
