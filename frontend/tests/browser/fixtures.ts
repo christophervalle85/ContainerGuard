@@ -43,7 +43,14 @@ export interface ApiState {
   progressStartedAt: number | null;
   progress: boolean;
   posts: { path: string; body: unknown }[];
-  error: 'malformed' | 'unavailable' | 'missing' | 'sbom' | 'evaluation' | null;
+  error:
+    | 'malformed'
+    | 'unavailable'
+    | 'missing'
+    | 'sbom'
+    | 'evaluation'
+    | 'capacity'
+    | null;
   policies: PolicyRecord[];
   versions: PolicyVersionRecord[];
   offPage: boolean;
@@ -99,6 +106,11 @@ export const test = base.extend<{ api: ApiState }>({
         return send({ ...completedScan, status });
       }
       if (path === '/api/v1/scans') {
+        if (request.method() === 'POST' && state.error === 'capacity')
+          return send(
+            { detail: 'Scan queue is full. Try again shortly.' },
+            429,
+          );
         if (request.method() === 'POST')
           return send(
             {

@@ -168,3 +168,18 @@ def test_unsupported_metadata_is_rejected_before_execution(
     with pytest.raises(ValueError):
         module.collect_sbom(PINNED, platform=platform, scanner_version=version)
     assert calls == []
+
+
+def test_collect_accepts_the_patched_scanner_contract(monkeypatch):
+    module = runner()
+    payload = (
+        Path("tests/fixtures/trivy/cyclonedx.json")
+        .read_text()
+        .replace('"version": "0.75.0"', '"version": "0.75.0+cg.1"')
+    )
+    monkeypatch.setattr(module, "run_bounded_command", lambda *a, **kw: payload)
+    outcome = module.collect_sbom(
+        PINNED, platform="linux/amd64", scanner_version="0.75.0+cg.1"
+    )
+    assert outcome.error_code is None
+    assert outcome.artifact.scanner_version == "0.75.0+cg.1"

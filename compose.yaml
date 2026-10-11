@@ -2,6 +2,9 @@ name: containerguard
 
 services:
   frontend:
+    cpus: "0.5"
+    mem_limit: 128m
+    pids_limit: 64
     image: containerguard-frontend:dev
     build:
       context: ./frontend
@@ -20,12 +23,16 @@ services:
       start_period: 5s
 
   api:
+    cpus: "1.0"
+    mem_limit: 512m
+    pids_limit: 128
     image: containerguard-api:dev
     build:
       context: .
       dockerfile: Dockerfile.api
     init: true
     environment:
+      MAX_ACTIVE_SCANS: ${MAX_ACTIVE_SCANS:-20}
       DATABASE_URL: ${CONTAINER_DATABASE_URL:?Set CONTAINER_DATABASE_URL}
       REDIS_URL: ${CONTAINER_REDIS_URL:?Set CONTAINER_REDIS_URL}
     ports:
@@ -49,6 +56,9 @@ services:
       start_period: 10s
 
   worker:
+    cpus: "2.0"
+    mem_limit: 2g
+    pids_limit: 256
     image: containerguard-worker:dev
     build:
       context: .
@@ -56,6 +66,7 @@ services:
     init: true
     stop_grace_period: 650s
     environment:
+      MAX_ACTIVE_SCANS: ${MAX_ACTIVE_SCANS:-20}
       DATABASE_URL: ${CONTAINER_DATABASE_URL:?Set CONTAINER_DATABASE_URL}
       REDIS_URL: ${CONTAINER_REDIS_URL:?Set CONTAINER_REDIS_URL}
       RQ_WORKER_NAME: containerguard-worker
@@ -76,12 +87,16 @@ services:
       start_period: 10s
 
   migrate:
+    cpus: "1.0"
+    mem_limit: 512m
+    pids_limit: 128
     image: containerguard-api:dev
     build:
       context: .
       dockerfile: Dockerfile.api
     command: ["alembic", "upgrade", "head"]
     environment:
+      MAX_ACTIVE_SCANS: ${MAX_ACTIVE_SCANS:-20}
       DATABASE_URL: ${CONTAINER_DATABASE_URL:?Set CONTAINER_DATABASE_URL}
     depends_on:
       db:
@@ -105,6 +120,9 @@ services:
       start_period: 10s
 
   redis:
+    cpus: "0.5"
+    mem_limit: 256m
+    pids_limit: 64
     image: redis:8.2-alpine
     command:
       - redis-server
@@ -114,6 +132,8 @@ services:
       - everysec
       - --save
       - ""
+      - --maxmemory
+      - 128mb
       - --maxmemory-policy
       - noeviction
     ports:

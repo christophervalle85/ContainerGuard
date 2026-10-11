@@ -41,7 +41,7 @@ describe('API boundary', () => {
       '/api/v1/scans/ff4599e5-4e9f-44c7-bbc2-e02db78bc008',
     );
   });
-  it.each([404, 409, 422, 502, 503, 504])(
+  it.each([404, 409, 422, 429, 502, 503, 504])(
     'reports a safe HTTP %s error without raw server text',
     async (status) => {
       respond({ detail: 'INTERNAL database password=secret' }, status);

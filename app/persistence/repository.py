@@ -17,6 +17,7 @@ from app.api.schemas import (
     ScanSubmission,
     Severity,
 )
+from app.persistence.admission import get_max_active_scans, reserve_scan_capacity
 from app.persistence.artifacts import add_sbom_outcome
 from app.persistence.models import Finding, Image, SbomArtifact, Scan
 from app.scanning.mock_scanner import build_mock_findings
@@ -188,6 +189,7 @@ def create_queued_trivy_scan(session: Session, submission: ScanSubmission) -> UU
     )
 
     with session.begin():
+        reserve_scan_capacity(session, limit=get_max_active_scans())
         session.add(scan)
 
     return scan_id
@@ -227,6 +229,7 @@ def start_trivy_scan(session: Session, submission: ScanSubmission) -> UUID:
     )
 
     with session.begin():
+        reserve_scan_capacity(session, limit=get_max_active_scans())
         session.add(scan)
 
     return scan_id

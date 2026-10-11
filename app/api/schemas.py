@@ -2,13 +2,21 @@ from datetime import datetime
 from enum import StrEnum
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.registries.docker_hub import parse_docker_tag
 
 
 class ScanSubmission(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     image_reference: str = Field(min_length=1, max_length=512)
+
+    @field_validator("image_reference")
+    @classmethod
+    def supported_reference(cls, value: str) -> str:
+        parse_docker_tag(value)
+        return value
 
 
 class ScanStatus(StrEnum):

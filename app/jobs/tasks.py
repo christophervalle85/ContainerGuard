@@ -32,6 +32,7 @@ def run_scan(scan_id: str) -> str:
             raise
         except Exception:
             logger.error("job_interrupted")
-            raise
+            # RQ stores and logs exception tracebacks outside our JSON formatter.
+            raise RuntimeError("Scan job interrupted; inspect scan status") from None
         logger.info("job_finished")
         return str(result_id)

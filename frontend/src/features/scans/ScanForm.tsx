@@ -3,6 +3,7 @@ import type { FormEvent } from 'react';
 import { useNavigate } from 'react-router';
 import { ApiError } from '../../api/client';
 import { submitScan } from '../../api/scans';
+import { isSupportedImageReference } from './reference';
 
 export function ScanForm({
   onHistoryRefresh,
@@ -24,8 +25,13 @@ export function ScanForm({
     event.preventDefault();
     if (active.current) return;
     const image = reference.trim();
-    if (!image) {
-      setError(new ApiError('Enter an image reference.', 422));
+    if (!isSupportedImageReference(image)) {
+      setError(
+        new ApiError(
+          'Enter a public Docker Hub reference with an explicit tag, such as docker.io/library/alpine:3.20.0.',
+          422,
+        ),
+      );
       return;
     }
     const controller = new AbortController();
@@ -54,7 +60,7 @@ export function ScanForm({
     }
   }
   const invalid = error?.status === 422;
-  const uncertain = error !== null && !invalid;
+  const uncertain = error !== null && !invalid && error.status !== 429;
   return (
     <form
       className="scan-form"

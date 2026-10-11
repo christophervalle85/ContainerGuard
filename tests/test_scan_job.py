@@ -65,3 +65,38 @@ def test_malformed_job_scan_id_is_rejected_before_database_access(monkeypatch):
     monkeypatch.setattr(tasks, "get_engine", unexpected_database)
     with pytest.raises(ValueError):
         tasks.run_scan("not-a-uuid")
+
+
+@pytest.mark.parametrize(
+    "sensitive",
+    [
+        "postgresql://operator:sentinel_database_password@db/private",
+        "redis://:sentinel_queue_password@redis/0",
+        "Bearer sentinel_registry_token",
+        "raw scanner stderr sentinel_output",
+    ],
+)
+def test_rq_failure_traceback_does_not_store_sensitive_exception_text(
+    monkeypatch, caplog, sensitive
+):
+    from rq import SimpleWorker
+
+    from tests.queue_support import isolated_scan_queue
+
+    def fail(*args, **kwargs):
+        raise RuntimeError(sensitive)
+
+    monkeypatch.setattr(tasks, "process_queued_trivy_scan", fail)
+    with isolated_repository_engine() as engine, isolated_scan_queue() as (queue, url):
+        monkeypatch.setattr(tasks, "get_engine", lambda: engine)
+        with Session(engine) as session:
+            scan_id = repository.create_queued_trivy_scan(session, SUBMISSION)
+        job = queue.enqueue(tasks.run_scan, str(scan_id), job_id=str(scan_id))
+        SimpleWorker([queue], connection=queue.connection).work(burst=True)
+        job.refresh()
+        assert job.get_status().value == "failed"
+        assert sensitive not in (job.latest_result().exc_string or "")
+        assert sensitive not in caplog.text
+        assert "Scan job interrupted" in (job.latest_result().exc_string or "")
+        with Session(engine) as session:
+            assert session.get(Scan, scan_id).status == "queued"

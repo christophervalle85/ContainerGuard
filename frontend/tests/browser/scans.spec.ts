@@ -104,3 +104,21 @@ test('section navigation scrolls to findings without submitting a scan', async (
     .toBeLessThan(100);
   expect(api.posts).toHaveLength(0);
 });
+
+test('queue rejection explains capacity without resubmission', async ({
+  page,
+  api,
+}) => {
+  api.error = 'capacity';
+  await page.goto('/scans');
+  await page
+    .getByLabel('Image reference')
+    .fill('docker.io/library/alpine:3.20.0');
+  await page.getByRole('button', { name: 'Submit scan', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText(
+    'The scan queue is full.',
+  );
+  await expect(page.getByText(/may have been saved/)).toHaveCount(0);
+  expect(api.posts).toHaveLength(1);
+  await expect(page).toHaveURL(/\/scans(?:\?|$)/);
+});
