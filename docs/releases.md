@@ -1,8 +1,11 @@
 # Running a release
 
-Release tooling is implemented. The first public release and anonymous
-installation verification are still pending. Use the [source setup](../README.md) until
-that evidence is recorded here.
+[ContainerGuard v0.1.0](https://github.com/christophervalle85/ContainerGuard/releases/tag/v0.1.0)
+is published. Anonymous image pulls and a fresh installation without rebuilding
+source passed a real scan, SBOM integrity checks, policy evaluation and persistence
+after application recreation. See the [verification record](development/verification.md#published-release-verification)
+for the source commit, image digests and observed results. This release is not
+signed and has no release-image SBOM or verified build provenance.
 
 A release contains separate API, worker and dashboard images. You run them locally
 with PostgreSQL and Redis; publishing the images does not host the application.

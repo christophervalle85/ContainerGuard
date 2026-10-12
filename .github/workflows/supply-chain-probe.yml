@@ -1,0 +1,32 @@
+name: Supply chain transport probe
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - security/release-tools.json
+      - scripts/install_release_tools.sh
+      - scripts/probe_release_supply_chain.py
+      - scripts/releases/supply_chain/**
+      - tests/test_supply_chain_*.py
+      - .github/workflows/supply-chain-probe.yml
+
+permissions:
+  contents: read
+
+jobs:
+  transport:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install reviewed Linux tools
+        env:
+          CG_RELEASE_TOOLS: ${{ runner.temp }}/release-tools
+        run: bash scripts/install_release_tools.sh "$CG_RELEASE_TOOLS"
+      - name: Qualify native source and unchanged OCI transport
+        env:
+          CG_RELEASE_TOOLS: ${{ runner.temp }}/release-tools
+        run: python3 scripts/probe_release_supply_chain.py --output-dir "$RUNNER_TEMP/probe"

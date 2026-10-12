@@ -1,7 +1,9 @@
 # Versioned releases
 
-Status: implemented; first publication and public installation verification are
-pending the release checkpoints below.
+Status: implemented and exercised by the public v0.1.0 release. Anonymous pulls
+and fresh-installation verification passed; see the
+[verification record](../development/verification.md#published-release-verification).
+Signing, release-image SBOMs and provenance verification remain separate work.
 
 ## Purpose and scope
 

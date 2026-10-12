@@ -1,4 +1,4 @@
-# Local verification record
+# Verification record
 
 These observations were recorded on October 11, 2026, on Apple Silicon with
 Docker Desktop. They describe this branch's local behavior, not a guarantee about
@@ -59,7 +59,8 @@ they do not replace the real image gate demonstration above.
 
 These are recorded verification results with retained source/run links, not a second
 developer's independent setup test. Live findings and database timestamps can
-change on later scans. No ContainerGuard release has been published yet.
+change on later scans. No ContainerGuard release had been published during this
+exercise; the published-release verification is recorded below.
 
 ## Checks
 
@@ -279,10 +280,57 @@ existing encoded, binary-adjacent, later-deleted and metadata probes. No raw mat
 reports were retained in the release handoff.
 
 No images, tags or GitHub Release were published during this local preflight.
-Linux release-run timing, first-package authorization with GITHUB_TOKEN, public
-package visibility and anonymous installation of the actual version still need
-execution after review and merge. Candidate/publisher job limits are execution
+The subsequent tagged run exercised Linux release execution, first-package
+authorization with GITHUB_TOKEN, public package access and anonymous installation;
+see the published-release record below. Candidate/publisher job limits are execution
 budgets, not a promise that every operation's maximum deadline can be exhausted.
 Runner interruption can prevent cleanup or retention of a partial-upload record;
 inspect all six destinations before attempting a new version, and never overwrite
 a partially published version. No second developer has independently tried setup.
+
+## Published-release verification
+
+[ContainerGuard v0.1.0](https://github.com/christophervalle85/ContainerGuard/releases/tag/v0.1.0)
+was published on October 12, 2026, at 05:05:10 UTC. It identifies source commit
+`b8a0e05a4313a7159d061e8aa240ffe8dff3aae3`. The
+[release workflow](https://github.com/christophervalle85/ContainerGuard/actions/runs/38203141835)
+passed quality checks, the complete candidate exercise, exact-image publication
+and draft creation. Its first attempt stopped before backend tests because the
+public registry refused a PostgreSQL pull with a data-limit error. Retrying the
+failed jobs succeeded without changing the tag, source or gate thresholds.
+
+Published application images:
+
+| Service | Registry digest |
+| --- | --- |
+| api | `sha256:1a01e5cc690949c5c922167abcce3d2df6972ab96ca36687ee42671e868971c4` |
+| worker | `sha256:03aea90eae4ee02917df913c3e18a1297fcd69916a2169fa6cc5ea9474091cf3` |
+| frontend | `sha256:a910d661289a28f1713f7fb930ca87e5b8b0243389216a582728a679b3d1193c` |
+
+Each digest belongs to its corresponding
+`ghcr.io/christophervalle85/containerguard-{api,worker,frontend}` package.
+Anonymous manifest reads and exact-digest Docker pulls verified public access.
+A fresh verification project used empty Docker authentication, random localhost
+ports and separate storage; no application images were rebuilt.
+
+Scan `8d25326f-703c-48f4-be33-2331fd8400eb` completed with 70 real
+findings using Trivy `0.75.0+cg.1`. Its SBOM SHA-256 was
+`809f9d174c718323ce04a8de69b864da265c9e6bb5a749cf7154abd58ff9e4ee`.
+Downloaded bytes matched the recorded checksum. Permissive and strict policy
+evaluations returned the expected outcomes, duplicate evaluation identity stayed
+unchanged, and stored scan/evaluation/SBOM evidence survived application recreation.
+The verification command exited successfully and removed only its own containers
+and volumes. Development data was preserved.
+
+After publication, the release page and both assets were anonymously accessible.
+Asset SHA-256 values:
+
+- `release.json`: `e69f517089ebe5425e18c669d33d1ad18b30d61236e6b1e0a653c317c818af11`.
+- `compose.release.yaml`: `a958e24cb412fda00750dbb5eca132be59fb8febcf57615d4037e2127fde47eb`.
+
+Application runtime reports retained one MEDIUM finding in the API, one MEDIUM
+and one UNKNOWN in the worker, and none in the frontend. Counts are dated
+observations. This release has no Cosign signatures, release-image SBOMs or
+verified build provenance, and no independent second-developer installation is
+claimed. PostgreSQL, Redis and builder images remain outside the application
+runtime vulnerability gate.

@@ -33,10 +33,13 @@ end-to-end tour.
 
 ## Versioned images
 
-The release workflow is being added for separate API, worker and dashboard images
-on GHCR. The [release guide](docs/releases.md) covers digest-pinned installation,
-public-access verification and recovery. First-release publication is still pending;
-the source setup below remains the verified way to start the project.
+[ContainerGuard v0.1.0](https://github.com/christophervalle85/ContainerGuard/releases/tag/v0.1.0)
+is available as separate API, worker and dashboard images on GHCR. A fresh
+installation using the published linux/amd64 images passed anonymous pulls, a real
+scan, SBOM integrity checks, policy evaluation and persistence after recreation.
+Follow the [release guide](docs/releases.md) to run it without building source, or
+use the source setup below for development. This release is not signed; release
+SBOMs and provenance verification are planned separately.
 
 ## Run it locally
 

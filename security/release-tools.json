@@ -1,0 +1,28 @@
+{
+  "cosign": {
+    "version": "3.1.3",
+    "url": "https://github.com/sigstore/cosign/releases/download/v3.1.3/cosign-linux-amd64",
+    "sha256": "4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71"
+  },
+  "buildx": {
+    "version": "0.38.0",
+    "url": "https://github.com/docker/buildx/releases/download/v0.38.0/buildx-v0.38.0.linux-amd64",
+    "sha256": "4fe4cc38adf48169132749b6ca22a990928db0118e3407584ee553723115d287"
+  },
+  "buildkit": {
+    "version": "0.34.0",
+    "image": "docker.io/moby/buildkit@sha256:3eea2ed5d1766c44eb4740853abf56ba85ad40b2c8d4a22e047cbacf15f463c8"
+  },
+  "skopeo": {
+    "version": "1.24.1",
+    "source": "https://github.com/containers/skopeo.git",
+    "commit": "77f3d92f861271c7cb9175afcf876017bcae9202",
+    "compiler_version": "1.27.2",
+    "compiler_image": "golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d"
+  },
+  "registry": {
+    "version": "3.0.0",
+    "image": "docker.io/library/registry@sha256:5b12b22f21522fe69443079df04c0f3f42cb9977857f3c20404386652a6c6d8e"
+  },
+  "inventory_manifest": "security/tools.json"
+}
