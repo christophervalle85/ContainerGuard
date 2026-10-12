@@ -1,7 +1,5 @@
 # Frontend Dashboard Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans for the established guided inline workflow. Steps use checkbox syntax. Preserve learner checkpoints and learner control of commits; do not implement the whole milestone in one turn.
-
 **Goal:** Let a browser user submit scans, inspect their evidence, download SBOMs, and manage/evaluate immutable security policies.
 
 **Architecture:** A React/TypeScript application under `frontend/` uses the existing FastAPI backend through relative `/api/v1` requests. Vite proxies requests in development; an unprivileged static server does so in Compose. PostgreSQL remains authoritative, with one additive scan-details response and no schema migration.
@@ -13,7 +11,7 @@
 ## Global Constraints
 
 - Use the existing `feat/frontend-dashboard` checkout; no new worktree and no implementation on main.
-- Work one task/checkpoint at a time. The learner reruns checks and tries the delivered behavior before the next task. Commits/pushes remain learner-led.
+- Work one task/checkpoint at a time. The maintainer reruns checks and tries the delivered behavior before the next task. Commits/pushes remain maintainer-reviewed.
 - Preserve compact history and existing response fields; add metadata only to the single-scan response. No database migration or scanner/retry change.
 - All browser API requests use relative `/api/v1/...` paths. Preserve the `/api/` prefix through both proxies.
 - Request deadline: 15 seconds. Poll three seconds after the last successful response, with no overlap. Stop after ten minutes elapsed, on terminal status, or on an API error; pause while hidden. Reloading the page restarts observation.
@@ -72,7 +70,7 @@ Expected: all commands exit zero. `test` runs Vitest once, with optional filenam
 - [x] Run `uv run --locked --env-file .env.example pytest tests/test_scan_details.py -q`. Expected RED: absent detail fields/type before implementation.
 - [x] Add the response model and bounded scan/image retrieval. Set `mock` using the same scanner-name convention as findings; keep history construction unchanged. Expose only already-safe persisted error details.
 - [x] Update intentional exact single-scan assertions, run the focused tests and backend shared checks. Expected GREEN; no new migration.
-- [x] Learner checkpoint: rebuild/recreate the API if using Compose, retrieve an existing real scan in Swagger, verify identity/timestamps/tool/mockfalse. Suggested commit: `Expose saved scan metadata for the dashboard`.
+- [x] Verification checkpoint: rebuild/recreate the API if using Compose, retrieve an existing real scan in Swagger, verify identity/timestamps/tool/mockfalse. Suggested commit: `Expose saved scan metadata for the dashboard`.
 
 ## Task 2: Create the frontend shell and API boundary
 
@@ -85,7 +83,7 @@ Expected: all commands exit zero. `test` runs Vitest once, with optional filenam
 - [x] Run `npm --prefix frontend test -- src/api/client.test.ts src/app/App.test.tsx`. Expected RED for absent client/layout behavior; tooling itself may be installed to enable the test runner.
 - [x] Implement the shell and API boundary. Validate response fields needed by each endpoint rather than casting arbitrary JSON and silently substituting defaults. Add a separate binary-download helper; never send downloads through JSON parsing. Use no automatic request retry. Native fetch stays behind this boundary.
 - [x] Configure Vite localhost5173 strictPort and server-only `API_PROXY_TARGET`, defaulting to `http://127.0.0.1:8000`, with `/api/` preserved. Run all frontend shared checks. Expected GREEN and a production asset build.
-- [x] Learner checkpoint: open the shell and navigate with the keyboard. Explain components/props, TypeScript contracts, and why the dev proxy differs from the backend. Suggested commit: `Add the typed React dashboard foundation`.
+- [x] Verification checkpoint: open the shell and navigate with the keyboard. Explain components/props, TypeScript contracts, and why the dev proxy differs from the backend. Suggested commit: `Add the typed React dashboard foundation`.
 
 ## Task 3: Submit scans and browse history
 
@@ -97,7 +95,7 @@ Expected: all commands exit zero. `test` runs Vitest once, with optional filenam
 - [x] Test empty/loading/error history, server-side pages, direct links, stable current page after a late old response, and no per-row metadata/findings calls. Keep limit/offset in validated URL parameters; invalid values normalize to defaults20/0 before requests.
 - [x] Run `npm --prefix frontend test -- src/features/scans/ScansPage.test.tsx`. Expected RED for missing workflow.
 - [x] Implement form/history with cancellation and current-request protection. Use no history polling loop. Show supported public DockerHub/linuxamd64 scope and an explicit refresh. On ambiguous submission failure suggest checking history before resubmitting.
-- [x] Run frontend shared checks. Expected GREEN. Learner submits a real scan through the UI and sees its saved ID/history; the details route can still be a shell at this checkpoint. Suggested commit: `Submit scans and browse durable history in the dashboard`.
+- [x] Run frontend shared checks. Expected GREEN. Submit a real scan through the UI and sees its saved ID/history; the details route can still be a shell at this checkpoint. Suggested commit: `Submit scans and browse durable history in the dashboard`.
 
 ## Task 4: Follow scan details with bounded polling
 
@@ -110,7 +108,7 @@ Expected: all commands exit zero. `test` runs Vitest once, with optional filenam
 - [x] Test visible digest/platform/timestamps/tool/safe errors, null metadata, missing UUID, fictional labels, and failed execution distinct from a completed zero-findings state.
 - [x] Run `npm --prefix frontend test -- src/features/scans/useScanDetails.test.tsx src/features/scans/ScanDetailsPage.test.tsx`. Expected RED.
 - [x] Implement status/identity and hook, with no POST in an effect. Format timezone explicitly and preserve full identifiers with copy actions. Run frontend shared checks. Expected GREEN.
-- [ ] Learner checkpoint: follow a real scan and verify completion stops refreshing. Explain effects, cleanup, cancellation, and why UI observation timeout does not cancel a job. Suggested commit: `Follow scan progress with bounded dashboard polling`.
+- [ ] Verification checkpoint: follow a real scan and verify completion stops refreshing. Explain effects, cleanup, cancellation, and why UI observation timeout does not cancel a job. Suggested commit: `Follow scan progress with bounded dashboard polling`.
 
 ## Task 5: Browse findings and download SBOMs
 
@@ -122,7 +120,7 @@ Expected: all commands exit zero. `test` runs Vitest once, with optional filenam
 - [x] Write SBOM tests for all four statuses, metadata-only rendering, explicit binary download with UUID filename, object URL cleanup, and409/404/500/network failures. A section failure leaves loaded identity/findings intact; a failed SBOM does not become a scan execution failure.
 - [x] Run `npm --prefix frontend test -- src/features/scans/FindingsSection.test.tsx src/features/scans/SbomSection.test.tsx`. Expected RED.
 - [x] Implement independently loading sections with cancellation, labeled severity filter, accessible table/pagination, and bounded binary helper. Do not parse/reserialize downloaded JSON or download it during polling.
-- [x] Run frontend shared checks. Expected GREEN. Learner filters real findings, downloads an SBOM, and compares its checksum with metadata. Suggested commit: `Inspect findings and download saved SBOMs in the dashboard`.
+- [x] Run frontend shared checks. Expected GREEN. Filter real findings, downloads an SBOM, and compares its checksum with metadata. Suggested commit: `Inspect findings and download saved SBOMs in the dashboard`.
 
 ## Task 6: Manage policies and immutable versions
 
@@ -134,7 +132,7 @@ Expected: all commands exit zero. `test` runs Vitest once, with optional filenam
 - [x] Test thresholds0/2147483647 accepted; empty/negative/fractional/out-of-range rejected without coercion. Test name trimming/length, explicitUNKNOWN action, requiredSBOMboolean, duplicate409, field422, pending disable, preserved values, and no repeated POST after a lost response.
 - [x] Run `npm --prefix frontend test -- src/features/policies/PoliciesPage.test.tsx src/features/policies/PolicyForm.test.tsx`. Expected RED.
 - [x] Implement the view and reusable rule form/summary. Use create-new-version wording and do not expose nonexistent edit/delete behavior. Refresh only affected lists. Run frontend shared checks. Expected GREEN.
-- [x] Learner creates a policy and a second version and confirms the first rules remain unchanged. Explain controlled inputs and converting form strings into validated API values. Suggested commit: `Manage immutable security policies in the dashboard`.
+- [x] Create a policy and a second version and confirms the first rules remain unchanged. Explain controlled inputs and converting form strings into validated API values. Suggested commit: `Manage immutable security policies in the dashboard`.
 
 ## Task 7: Evaluate explicit versions and show saved decisions
 
@@ -147,7 +145,7 @@ Expected: all commands exit zero. `test` runs Vitest once, with optional filenam
 - [x] Test pending/failed/fictional/no-image scans disabled with explanation, backend409 authoritative, missing resource404, corruptionerror distinct from rejection, and lost response with no automatic POST. Selection changes during an in-flight request must not mislabel the resulting version.
 - [x] Run `npm --prefix frontend test -- src/features/scans/EvaluationSection.test.tsx`. Expected RED.
 - [x] Implement picker, submission, and results. Keep saved result rendering keyed to returned scan/version identity; refresh list after mutation without overwriting historical decisions. Run frontend shared checks. Expected GREEN.
-- [x] Learner evaluates a real scan, checks the determining rule, then repeats the request and verifies saved identity. Suggested commit: `Explain saved policy evaluations in the dashboard`.
+- [x] Evaluate a real scan, checks the determining rule, then repeats the request and verifies saved identity. Suggested commit: `Explain saved policy evaluations in the dashboard`.
 
 ## Task 8: Serve the complete UI through Compose
 
@@ -159,7 +157,7 @@ Expected: all commands exit zero. `test` runs Vitest once, with optional filenam
 - [x] Build locked static assets, choose and record the supported unprivileged Nginx tag/digest used, configure proxy/DNS/fallback without broadening the Python Docker context, and add frontend service after API health. No runtimeNode/devtools/secrets or socket mount.
 - [x] Run `docker compose --env-file .env.example config --quiet` and `docker compose --env-file .env.example build frontend`. Expected valid configuration/build. Inspect runtime nonroot and test health/direct reload/proxy/error checks; expected GREEN.
 - [x] Confirm frontend health only establishes static-server liveness, existing migration dependency still blocks API/worker as before, and named data volumes are retained. Run frontend shared checks after configuration changes.
-- [x] Learner starts the Compose UI at8080, completes a real workflow, recreates application services, and retrieves the same scan/artifact/evaluations. Suggested commit: `Run the dashboard and API proxy through Compose`.
+- [x] Start the Compose UI at8080, completes a real workflow, recreates application services, and retrieves the same scan/artifact/evaluations. Suggested commit: `Run the dashboard and API proxy through Compose`.
 
 ## Task 9: Browser workflows and CI checks
 
@@ -171,18 +169,18 @@ Expected: all commands exit zero. `test` runs Vitest once, with optional filenam
 - [x] Add fixture failures for malformed API, unavailable proxy, missing scan, failedSBOM, evaluationerror, and off-first-page policy/version selection. Fixture intercepts must not hide real static routing failures; Task8 covers the actual static server separately.
 - [x] Run `npm --prefix frontend run test:e2e`. Expected RED for any missing behavior; distinguish a missing browser/tooling failure from the behavior regression before fixing product code.
 - [x] Implement only demonstrated behavior fixes with focused RED/GREEN tests, then add the frontend CI job using least permissions. Frontend build artifacts and test reports stay ignored; upload only useful failure reports if configured.
-- [x] Run backend and frontend shared checks plus browser suite. Expected GREEN; CI YAML parses and keeps backend isolation/official ECR service-image references. Learner reruns checks before commit. Suggested commit: `Check dashboard browser workflows in CI`.
+- [x] Run backend and frontend shared checks plus browser suite. Expected GREEN; CI YAML parses and keeps backend isolation/official ECR service-image references. Rerun checks before commit. Suggested commit: `Check dashboard browser workflows in CI`.
 
 ## Task 10: Integrated verification, documentation, and review
 
 **Files:** Refine frontend components/styles for the requested UI/UX pass; update README, `docs/architecture/{frontend,containers}.md`, and this checklist. Keep screenshots/demo evidence limited to features actually verified.
 
-- [x] Complete the learner-requested UI/UX polish pass using a frontend design plugin. Figma is installed and is the current candidate; confirm its connection/capabilities when starting the pass. Apply the deferred decisions in UI/UX notes below. Review screen hierarchy, spacing, typography, scan progress, forms, empty/error states, keyboard access, and narrow-screen layouts with the learner, then implement the agreed design in this React app. Preserve API behavior and rerun affected tests plus the full frontend checks.
+- [x] Refine hierarchy, spacing, typography, scan progress, forms, empty/error states, keyboard access, and narrow-screen layouts. Apply the UI/UX decisions below, preserve API behavior, and rerun affected tests and the full frontend checks.
 - [x] Run all backend/frontend/browser checks, build all three application images, and exercise the complete real browser workflow in Compose. Record actual image digest/platform/Trivyversion/date/outcomes; no fixed live finding count assertions.
 - [x] Verify checksum-preserving download, explicit-version pass/rejection, historical snapshots after policy evolution, retained history after recreation, and visible scan/SBOM/API/evaluation failure states. Exercise API reconnection after recreation. Use disposable resources for destructive cases and remove only owned resources.
 - [x] Update README startup, Node24 hostdev, UI/APIports, tests, polling deadline/page reload, unknownPOSToutcome, limits, and troubleshooting. Mark architecture implemented only after verification. Explain the backend addition and why TypeScript contracts are not runtime validation.
-- [x] Dispatch one fresh independent whole-branch reviewer through requesting-code-review, passing plan/spec and Review Focus. Resolve Important/Critical findings with regression RED/GREEN and full checks; record minor limitations honestly. No per-checkpoint implementer agents.
-- [ ] Learner reviews scope and evidence, commits/pushes; open PR only when requested. Confirm all relevant CI jobs green before merge. Suggested final commit: `Document and verify the complete dashboard workflow`.
+- [x] Review the complete branch against the plan, architecture, and review-focus cases. Resolve important defects with regression tests and rerun the affected checks; record limitations.
+- [ ] Maintainer reviews scope and evidence, commits/pushes; open PR only when requested. Confirm all relevant CI jobs green before merge. Suggested final commit: `Document and verify the complete dashboard workflow`.
 
 ## UI/UX decisions
 
@@ -204,16 +202,15 @@ Expected: all commands exit zero. `test` runs Vitest once, with optional filenam
   interface includes the subsequent compact-layout refinements.
 
 
-## Execution status
+## Implementation record
 
-Implementation and local integrated verification are complete in the existing
-feature branch. The learner accepted the UI refinement. A fresh independent
-whole-branch review and focused follow-up are complete; its minor findings have
-been addressed. The architecture document records the live verification results
-and the boundary between browser fixtures and real Compose evidence. Final
-learner sign-off, commit/push, PR creation, and GitHub CI remain pending.
+The dashboard, Compose integration, UI refinements, and local verification are
+complete. The whole-branch review and follow-up checks found no remaining code
+defects within the documented scope. These task notes preserve the original
+checkpoints; see [verification](verification.md) for subsequent GitHub CI and
+whole-application results.
 
-Task4's original learner polling checkbox is retained for final sign-off. The
-final verification submitted a real scan through the dashboard and reached
-Completed automatically; the browser suite separately observes queued/running/
-completed transitions and the unit suite verifies terminal polling cleanup.
+The polling checklist records the original manual checkpoint. Later integrated
+verification followed a real scan through automatic completion. Browser fixtures
+cover queued/running/completed transitions, and unit tests cover terminal polling
+cleanup.

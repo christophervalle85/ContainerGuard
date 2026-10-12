@@ -101,5 +101,5 @@ def test_runner_never_passes_unusable_scan(tmp_path, mode, expected):
 def test_standalone_security_scripts_parse_on_ci_system_python():
     import ast
 
-    for path in (ROOT / "scripts").glob("*.py"):
+    for path in (ROOT / "scripts").rglob("*.py"):
         ast.parse(path.read_text(), filename=str(path), feature_version=(3, 12))

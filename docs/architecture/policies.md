@@ -135,8 +135,7 @@ scan data. API tests verify validation, status codes, pagination, and rule-level
 responses. Live demonstrations show one pass and one rejection with reasons;
 fixture tests do not depend on live vulnerability counts.
 
-Implementation was completed through learner checkpoints: artifact model/validation,
-bounded generation, persistence/download, policies/versioning, pure evaluation,
-then evaluation persistence/API and end-to-end evidence. Each checkpoint included
-focused tests and an explanation before proceeding. Commits remain learner-led.
+Implementation covers artifact validation, bounded generation, persistence and
+downloads, immutable policy versions, rule evaluation, and saved API results.
+Focused tests and end-to-end verification cover each boundary.
 See [SBOM artifacts](sboms.md) for the artifact half of the design.

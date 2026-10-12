@@ -16,3 +16,17 @@
 **/.env
 **/.env.*
 **/.DS_Store
+**/.git
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/id_rsa*
+**/id_ed25519*
+**/credentials*
+**/secrets*
+**/*.log
+**/.cache
+**/node_modules
+**/dist
+**/coverage

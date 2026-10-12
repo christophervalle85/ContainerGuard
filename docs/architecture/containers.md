@@ -117,7 +117,7 @@ only in the worker, trusted certificates, no development tools, and writable
 fresh/reused cache volumes. A disposable migration-failure exercise blocked
 application startup without modifying the development database.
 
-The learner verified real findings through the containerized API, persistence
+Local verification confirmed real findings through the containerized API, persistence
 after application container replacement, queued work completing after worker
 restart, and manual recovery of a simulated running attempt. A graceful stop
 requested during an active scan returned after that scan reached completed.

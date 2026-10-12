@@ -136,7 +136,7 @@ in a disposable stack using a simulated running attempt. Retry budgets and
 5/15-second scheduling were also checked by fixtures inside the worker image;
 these tests did not create public-network failures.
 
-An active real scan also completed before the learner's graceful worker stop
+An active real scan also completed before a graceful worker stop
 returned. This establishes the observed normal-stop behavior; it does not add
 a guarantee for engine crashes, forced stops, or cross-service write failures.
 

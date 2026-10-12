@@ -1,7 +1,5 @@
 # Policies and SBOM Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans for the agreed guided inline execution. Steps use checkbox syntax. Preserve learner checkpoints and learner control of commits; do not implement this whole plan in one turn.
-
 **Goal:** Generate downloadable image SBOMs and save explainable, versioned security-policy evaluations.
 
 **Architecture:** The existing worker collects findings and attempts bounded SBOM generation for the same pinned image. PostgreSQL stores the immutable artifact outcome, policy versions, and evaluations. A pure policy evaluator has no database or network dependencies; persistence and API modules coordinate its inputs and results.
@@ -26,7 +24,7 @@
 - Missing required artifacts cause rejection; corrupted available artifacts cause evaluation error.
 - Database/queue outage responses remain safe; never expose raw diagnostics, URLs, or secrets.
 - Reuse existing isolated PostgreSQL/Redis test harnesses. No public-network calls in routine tests and no development-volume cleanup.
-- Keep new filenames neutral. Commits, pushes, and PR creation remain explicit learner checkpoints.
+- Keep new filenames neutral. Commits, pushes, and PR creation remain explicit verification checkpoints.
 
 ## Review focus
 
@@ -73,7 +71,7 @@ docker compose --env-file .env.example --profile test up -d --wait test-db test-
 ```
 
 Expected: both dedicated services healthy. Use `.env` consistently instead if
-that is the learner's configured file; its test targets must remain separate.
+that is the configured file; its test targets must remain separate.
 
 After each checkpoint, run the focused tests below, then:
 
@@ -130,8 +128,8 @@ record actual totals rather than prescribing a number.
   recursive/unusable structures with safe ValueError. Do not claim full schema
   validation or parse references by loose substring matching.
 - [x] Repeat the focused command. Expected: all parser cases pass. Run shared
-  lint/format/full checks. Explain checksum versus completeness to the learner.
-- [ ] Learner checkpoint. Suggested commit: `Validate bounded CycloneDX artifacts`.
+  lint/format/full checks. Explain checksum versus completeness to the maintainer.
+- [ ] Verification checkpoint. Suggested commit: `Validate bounded CycloneDX artifacts`.
 
 ## Task 2: Store artifact outcomes
 
@@ -161,7 +159,7 @@ adds/flushes in its caller's transaction and never commits on its own.
   unique scan association; timestamp is timezone-aware.
 - [x] Repeat focused tests and shared checks. Expected: GREEN with old data
   preserved. Do not migrate the development DB until this isolated check passes.
-- [ ] Learner checkpoint: apply `uv run --env-file .env.example alembic upgrade head`.
+- [ ] Verification checkpoint: apply `uv run --env-file .env.example alembic upgrade head`.
   Expected: revision 0002 applied without resetting history. Suggested commit:
   `Persist scan-associated SBOM outcomes`.
 
@@ -186,7 +184,7 @@ adds/flushes in its caller's transaction and never commits on its own.
   a failed outcome; programming and database errors are not broadly swallowed.
 - [x] Repeat focused/shared checks. Expected: GREEN. Explain that another Trivy
   invocation still uses the same image identity rather than resolving the tag.
-- [ ] Learner checkpoint. Suggested commit: `Generate SBOMs with bounded Trivy execution`.
+- [ ] Verification checkpoint. Suggested commit: `Generate SBOMs with bounded Trivy execution`.
 
 ## Task 4: Preserve findings when generation fails
 
@@ -214,7 +212,7 @@ fixtures/legacy callers, not the real collector's new scan path.
   scan and queue lifecycle guards; log only safe SBOM outcome/code fields.
 - [x] Repeat focused/shared checks. Expected: GREEN with no scanner/network calls
   in routine tests. Add assertions that existing mocked collectors stay mocked.
-- [ ] Learner checkpoint: rebuild worker, submit a real scan, inspect completed
+- [ ] Verification checkpoint: rebuild worker, submit a real scan, inspect completed
   findings and its stored artifact outcome. Expected: completed and available;
   record identity and checksum without assuming a fixed vulnerability count.
   Suggested commit: `Save SBOM outcomes with completed scans`.
@@ -241,10 +239,10 @@ Use typed missing/not-ready/integrity exceptions mapped by the router.
 - [x] Implement metadata without loading payload; verify a bounded artifact on
   download using Task1 validation plus saved size/checksum/scan image comparison.
   Return original bytes with application/json. Do not implement backfill/update.
-- [x] Repeat focused/shared checks. Expected: GREEN. Learner downloads one real
+- [x] Repeat focused/shared checks. Expected: GREEN. Download one real
   artifact and confirms its checksum; recreate application containers and retrieve
   the same bytes again. Expected: matching checksum and retained artifact.
-- [x] Learner checkpoint. Suggested commit: `Expose SBOM metadata and downloads`.
+- [x] Verification checkpoint. Suggested commit: `Expose SBOM metadata and downloads`.
 
 ## Task 6: Strict policies and immutable versions
 
@@ -281,9 +279,9 @@ versions by version_number descending. Missing parent is a typed not-found error
   Evaluation insert/read behavior belongs to Task8. Policy creation owns its
   transaction; internal helpers must not open nested implicit transactions.
 - [x] Repeat focused/shared checks; migrate development only after isolated tests
-  pass. Expected: old scans/artifacts preserved. Learner creates version1 and
+  pass. Expected: old scans/artifacts preserved. Create version1 and
   version2 through API docs and retrieves both unchanged.
-- [x] Learner checkpoint. Suggested commit: `Add strict policies and immutable versions`.
+- [x] Verification checkpoint. Suggested commit: `Add strict policies and immutable versions`.
 
 ## Task 7: Pure, explainable evaluation
 
@@ -317,7 +315,7 @@ names; evaluator version is the constant `1`.
   counts retained. Optional/ignored rules pass with explicit explanations.
 - [x] Repeat focused/shared checks. Expected: GREEN. Explain why a test expecting
   policy rejection passes when the evaluator correctly returns failed.
-- [x] Learner checkpoint. Suggested commit: `Evaluate security rules with clear explanations`.
+- [x] Verification checkpoint. Suggested commit: `Evaluate security rules with clear explanations`.
 
 ## Task 8: Save evaluations and expose them
 
@@ -347,9 +345,9 @@ and UUID descending. Use typed missing/ineligible exceptions, not unsafe strings
   the existing evaluation. Persist fixed error outcomes for unusable evidence;
   DB failures propagate to safe503 rather than fabricating a saved result.
   Do not load all findings into Python or return artifact bytes in evaluations.
-- [x] Repeat focused/shared checks. Expected: GREEN. Learner evaluates one scan
+- [x] Repeat focused/shared checks. Expected: GREEN. Evaluate one scan
   against an explicit version, repeats it, and verifies the same evaluation ID.
-- [x] Learner checkpoint verified duplicate evaluation identity. Suggested commit: `Persist versioned scan policy evaluations`. Commit remains learner-led.
+- [x] Verification checkpoint verified duplicate evaluation identity. Suggested commit: `Persist versioned scan policy evaluations`. Commit remains maintainer-reviewed.
 
 ## Task 9: Integrated verification and documentation
 
@@ -377,18 +375,15 @@ coverage only where artifact invariants require it. No frontend or release scope
   Explain per-file versus total storage, separate SBOM failures, immutable
   versions, occurrence counting, strict eligibility, error versus rejection,
   no backfill, and checksum limits. Expected: commands reflect actual behavior.
-- [x] Use the requesting-code-review skill for a fresh independent whole-branch
-  review. Resolve important findings with focused tests and rerun affected checks.
+- [x] Review the complete branch against the architecture and test evidence. Resolve important findings with focused tests and rerun affected checks.
   Expected: no unresolved important defects; report limitations honestly.
-- [ ] Learner reviews final scope, commits, and pushes. Open PR only when requested;
+- [ ] Maintainer reviews final scope, commits, and pushes. Open PR only when requested;
   wait for passing CI before merge. Expected: documented evidence matches shipped
   behavior, no secrets/reports/cache files in the commit.
 
-## Execution handoff
+## Implementation record
 
-The design summary was approved before this plan was written. The established
-method is guided inline execution in the current checkout, with learner-run
-checkpoint commands and explanations. Review this written plan before execution;
-then start Task1 only. Tasks 1–8 have been implemented and verified at learner checkpoints. Final
-integrated checks and documentation are recorded under Task 9; commits and the
-pull request remain learner-led.
+Artifact validation, bounded generation, persistence/downloads, immutable policy
+versions, and saved evaluations were implemented and checked in Tasks 1–8.
+Task 9 records the integrated verification. See the current
+[verification record](verification.md) for subsequent whole-application results.

@@ -31,6 +31,13 @@ The API accepts work; the worker does the scanning. PostgreSQL keeps the evidenc
 and saved policy decisions. Try the [demo walkthrough](docs/demo.md) for a short
 end-to-end tour.
 
+## Versioned images
+
+The release workflow is being added for separate API, worker and dashboard images
+on GHCR. The [release guide](docs/releases.md) covers digest-pinned installation,
+public-access verification and recovery. First-release publication is still pending;
+the source setup below remains the verified way to start the project.
+
 ## Run it locally
 
 For the container setup, you only need Git and Docker with Compose. Start the
@@ -771,9 +778,12 @@ remaining checks.
 - `uv.lock`: exact dependency versions used to recreate the environment.
 - `.python-version`: the project's Python version.
 - `.github/workflows/ci.yml`: the automated GitHub checks.
+- `scripts/releases/`: checked archive handoffs, isolated runtime verification, publication and release assets.
+- `.github/workflows/release.yml`: trusted-tag checks, separate publisher and draft notes.
+- `docs/architecture/releases.md` and `docs/releases.md`: release design and installation.
 - `scripts/` and `security/`: fail-closed vulnerability gate, pinned tools, and exceptions.
 - `app/persistence/admission.py`: atomic outstanding-scan capacity.
-- `docs/development/verification.md`: measured local evidence and pending CI verification.
+- `docs/development/verification.md`: local, committed-checkout, and GitHub CI verification evidence.
 - `docs/demo.md` and `docs/images/`: walkthrough and screenshots of real results.
 - `.env.example`: local demonstration database and queue configuration.
 
