@@ -1,7 +1,8 @@
 # Persistence implementation plan
 
 Status: implementation, local checks, fresh-environment setup, and code review
-complete. Pull request and remote CI verification remain.
+complete. These notes record the persistence implementation checkpoint; later
+whole-application CI results are in [verification](verification.md).
 
 Design: [Persistence architecture](../architecture/persistence.md).
 
@@ -9,8 +10,7 @@ Design: [Persistence architecture](../architecture/persistence.md).
 
 Keep the existing API compatible while replacing dictionaries with synchronous
 SQLAlchemy queries against PostgreSQL. Alembic manages schema changes. Work in
-small test-first slices, with prepared infrastructure and learner-written model
-and query exercises. No real scanning is introduced here.
+small test-first slices, with prepared infrastructure and model and query integration tests. No real scanning is introduced here.
 
 ## Constraints
 

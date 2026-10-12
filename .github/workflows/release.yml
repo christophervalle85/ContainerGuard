@@ -1,0 +1,119 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: containerguard-release
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.source.outputs.version }}
+      commit: ${{ steps.source.outputs.commit }}
+    steps:
+      - name: Check out tagged source and main ancestry
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate stable tag and reviewed source
+        id: source
+        env:
+          VERSION: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          python3 -m scripts.releases guard --version "$VERSION" --commit "$COMMIT"
+          printf 'version=%s\ncommit=%s\n' "$VERSION" "$COMMIT" >> "$GITHUB_OUTPUT"
+
+  quality:
+    needs: guard
+    uses: ./.github/workflows/ci.yml
+    with:
+      release_candidate: true
+      release_version: ${{ needs.guard.outputs.version }}
+      release_commit: ${{ needs.guard.outputs.commit }}
+
+  publish:
+    needs: [guard, quality]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+    outputs:
+      release_artifact_id: ${{ steps.manifest_upload.outputs.artifact-id }}
+    steps:
+      - name: Check out reviewed release scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.guard.outputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Download this run's exact checked candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.quality.outputs.candidate_artifact_id }}
+          path: ${{ runner.temp }}/checked-candidate
+          merge-multiple: true
+      - name: Validate and publish exact image archives
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.guard.outputs.version }}
+          COMMIT: ${{ needs.guard.outputs.commit }}
+          CANDIDATE_ID: ${{ needs.quality.outputs.candidate_artifact_id }}
+        run: |
+          case "$CANDIDATE_ID" in ''|*[!0-9]*) exit 2 ;; esac
+          python3 -m scripts.releases publish --version "$VERSION" --commit "$COMMIT" --handoff-dir "$RUNNER_TEMP/checked-candidate"
+      - name: Transfer digest manifest to draft notes job
+        id: manifest_upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: published-release-manifest
+          path: ${{ runner.temp }}/checked-candidate/release.json
+          retention-days: 7
+          if-no-files-found: error
+      - name: Retain safe partial-publication record
+        if: ${{ failure() && hashFiles(format('{0}/checked-candidate/partial-publication.json', runner.temp)) != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: partial-publication
+          path: ${{ runner.temp }}/checked-candidate/partial-publication.json
+          retention-days: 7
+          if-no-files-found: error
+
+  draft:
+    needs: [guard, publish]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Check out reviewed release scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.guard.outputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Download this run's published digest manifest
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.publish.outputs.release_artifact_id }}
+          path: ${{ runner.temp }}/release-manifest
+          merge-multiple: true
+      - name: Create draft with installation assets
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          MANIFEST_ID: ${{ needs.publish.outputs.release_artifact_id }}
+        run: |
+          case "$MANIFEST_ID" in ''|*[!0-9]*) exit 2 ;; esac
+          python3 -m scripts.releases draft --manifest "$RUNNER_TEMP/release-manifest/release.json" --output-dir "$RUNNER_TEMP/release-assets"

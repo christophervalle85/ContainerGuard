@@ -1,7 +1,5 @@
 # Security and quality implementation plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans for inline execution, or superpowers:subagent-driven-development if the user chooses delegation. Track steps with the checkboxes below.
-
 **Goal:** Finish the local product with blocking security checks, bounded scan admission, and reproducible portfolio evidence.
 
 **Architecture:** PostgreSQL remains the source of truth for outstanding scans. CI scans committed dependencies and locally built runtime images, then evaluates validated reports with a small shared gate. Existing RQ processing and browser workflows remain intact.
@@ -13,7 +11,7 @@
 ## Global constraints
 
 - Work in the existing VSCode checkout; no worktrees. Use `feat/security-quality` for implementation after plan approval. Preserve uncommitted approved documentation when switching branches.
-- Do not commit, push, open a PR, or merge without the learner's instruction. Each task ends with a reviewable diff, not an automatic commit.
+- Do not commit, push, open a PR, or merge without the maintainer's instruction. Each task ends with a reviewable diff, not an automatic commit.
 - Localhost-only; no authentication, deployment, publishing, signing, or automatic interrupted-job reconciliation.
 - Block HIGH and CRITICAL, including unfixed findings. No exceptions initially; any exception expires within 30 days and matches vulnerability, package, and target.
 - MAX_ACTIVE_SCANS defaults to 20, accepts integers 1 through 1000, and counts queued/running real Trivy scans, including retry delays.
@@ -65,7 +63,7 @@
 - [x] Write failing runner tests using a fake executable: scanner exits nonzero while writing a clean report; scanner times out; scanner produces no report; filesystem report omits one lockfile; valid report blocks. Assert no failure becomes exit 0 and stale report files cannot be reused.
 - [x] Implement explicit Trivy vulnerability-only JSON scans, all severities, no ignore-unfixed filtering, bounded execution, and fresh output paths. Pass an explicit empty native ignore file/config from a temporary directory; gate exceptions come only from `security/exceptions.json`. Include development dependencies using the pinned CLI's verified flags. Validate both `uv.lock` and `frontend/package-lock.json` target coverage.
 - [x] Build and scan the current linux/amd64 API, worker, and frontend images. Record actual package/OS report targets, scanner version, database metadata, and HIGH/CRITICAL baseline. Update fixtures only with sanitized shapes, not changing live findings.
-- [x] Resolve baseline findings through targeted supported dependency/base-image updates and relevant existing tests. If an unfixed finding requires an exception, present the exact evidence and proposed exception to the learner before adding it; do not weaken the threshold.
+- [x] Resolve baseline findings through targeted supported dependency/base-image updates and relevant existing tests. If an unfixed finding requires an exception, present the exact evidence and proposed exception to the maintainer before adding it; do not weaken the threshold.
 - [x] Run Gitleaks with default rules, full redaction, and reachable history. Create an ephemeral synthetic-secret repository outside the source tree and assert detection exits nonzero with no sentinel printed. Do not commit the synthetic credential fixture. If demo credentials cause a proven false positive, scope an exception to the exact documented example and path.
 - [x] Add dependency/secret CI jobs and a runtime-image matrix (`api`, `worker`, `frontend`), linux/amd64 Docker builds, bounded 20-minute job deadlines, and 7-day vulnerability-report retention. Pin any newly used actions by verified SHA, retain contents: read and persist-credentials: false; checkout history for secrets uses fetch-depth: 0.
 - [x] Upload only validated vulnerability reports/summaries on success or gate failure, never raw secret output. Scanner/install failures remain failing jobs. Reports identify target and tool version; no `continue-on-error` or unconditional success fallback.
@@ -130,9 +128,9 @@
 - [x] Use a unique Compose project and alternate ports with fresh named volumes/cache. Run documented setup/migrations, scan a public Docker Hub image, inspect findings, verify downloaded SBOM hash, version a policy, and retrieve its evaluation. Confirm restart persistence. Never reuse or remove development volumes.
 - [x] Capture real browser screenshots of scan findings, SBOM metadata/download, and evaluation rules. Inspect screenshots for accidental personal information or credentials. Record live versions/date and counts as observations, not permanent expected values.
 - [x] Add a concise Mermaid system diagram and short demo walkthrough. Update README with security-check commands and links, threat boundaries, exact scan/gate scope, capacity semantics, and recovery instructions. Change security.md status only for controls actually verified.
-- [ ] After learner-authorized push, demonstrate deliberately red test and gate runs on a disposable demonstration branch, restore correct code, and record run links. No automatic push under this plan. Scanner-failure fixtures must exercise the same runner CI uses.
-- [x] Run complete backend/frontend checks and all runtime builds/security scans. Record any unresolved findings or exceptions clearly. Request a final independent review only through the execution approach the learner chooses.
-- [ ] Repeat setup from a committed checkout and record final CI results after the learner commits/pushes. State explicitly if no second developer has exercised setup; do not claim external validation. Clean only verification-owned resources.
+- [x] After maintainer-approved push, demonstrate deliberately red test and gate runs on a disposable demonstration branch, restore correct code, and record run links. No automatic push under this plan. Scanner-failure fixtures must exercise the same runner CI uses.
+- [x] Run complete backend/frontend checks and all runtime builds/security scans. Record any unresolved findings or exceptions clearly. Review the complete branch against the design and verification evidence.
+- [x] Repeat setup from a committed checkout and record final CI results after the maintainer commits/pushes. State explicitly if no second developer has exercised setup; do not claim external validation. Clean only verification-owned resources.
 
 ## Verification commands
 
@@ -163,10 +161,9 @@ unexcepted HIGH/CRITICAL finding, and no scanner infrastructure error.
 
 ## Execution and review
 
-Recommended: inline execution in this chat, checkpoint by checkpoint, followed by
-one independent whole-branch review. It preserves the learning cadence and avoids
-repeated task-context setup. The alternative is delegated implementation and a
-fresh review for every task. Neither choice authorizes commits or pushes.
+The implementation and full-branch review are complete. Subsequent committed-
+checkout and controlled red/green CI results are recorded in
+[verification](verification.md).
 
 Plan self-review: all spec sections map to Tasks 1–7. The five review-focus cases
 have explicit tests. Gate and runner interfaces remain distinct; repository

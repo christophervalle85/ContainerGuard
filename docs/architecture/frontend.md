@@ -1,6 +1,7 @@
 # Frontend architecture
 
-Status: implemented and locally verified. Independent branch review is complete. The learner controls commit, push, PR creation, and the GitHub CI checkpoint.
+Status: implemented. Local and GitHub CI verification results are recorded in
+[verification](../development/verification.md).
 
 ## Purpose and scope
 
@@ -12,9 +13,7 @@ source of truth for history, image identity, findings, artifacts, and evaluation
 
 The agreed scope is three views: scans and recent history; scan details; policies.
 Evaluation controls and results belong to the selected scan's details. This keeps
-the relationship between the decision and its evidence visible. The user has
-JavaScript/React experience and wants focused refreshers as concepts arise.
-Implementation proceeds through learner checkpoints, not a full milestone dump.
+the relationship between the decision and its evidence visible.
 
 Success means a keyboard user can complete the browser workflow, saved history
 survives service recreation, and Compose starts the complete local application.
@@ -287,9 +286,8 @@ after recreation. Use disposable resources for destructive verification.
 
 Update README with frontend startup, host development, checks, request/polling
 limits, and troubleshooting. Keep this document under a neutral filename as the
-architecture evolves. Create a separate implementation checkpoint plan only
-after this written design is reviewed. Commits and final checkpoint verification
-remain learner-led; do not implement later checkpoints ahead of the learner.
+architecture evolves. The implementation history is recorded in the separate
+development plan.
 
 ## References
 
@@ -374,7 +372,7 @@ browser tests, Ruff, ESLint, Prettier, TypeScript, production build, Compose
 validation, and all three application image builds. Independent whole-branch
 review found no Critical or Important defect. Its minor findings were resolved:
 safe 502/504 availability messages, current setup docs, and explicit UTC timestamp
-conventions. The focused review follow-up found no remaining issues. GitHub CI
-has not yet run for these uncommitted changes. Focused layout/keyboard checks are
+conventions. The focused review follow-up found no remaining issues. These numbers describe the original frontend verification checkpoint. Later
+GitHub CI results are recorded in [verification](../development/verification.md). Focused layout/keyboard checks are
 not a complete accessibility audit; public deployment and authentication remain
 outside this scope.

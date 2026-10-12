@@ -13,11 +13,53 @@ Compose project used fresh PostgreSQL, Redis, and Trivy cache volumes and ports
 18080/18000/15433/16380. Development containers and volumes were not reused.
 Application recreation preserved downloaded SBOM bytes.
 
-This was an **uncommitted source snapshot**, not a committed fresh checkout.
-After committing and pushing, repeat the setup from a clean clone and record the
-GitHub run links. The new security jobs, Linux installer as a whole, and controlled
-red CI demonstrations have not yet run on GitHub. No second developer has tried
-this setup. Local gates and negative tests do not establish those remaining facts.
+The initial exercise below used an **uncommitted source snapshot**. A subsequent
+committed clean-clone exercise and GitHub execution completed the remaining
+verification checks; see the follow-up record below. No second developer has tried
+this setup, so independent developer usability is not established.
+
+## Committed checkout and GitHub follow-up
+
+Commit `c61370bf57aebf98c00d0b52c0d43b6bb8e43cf8` was cloned from the remote
+feature branch into a fresh verification directory. Its application images were
+built and run with a unique Compose project, alternate ports, fresh volumes, and
+an empty Trivy cache. The real browser workflow exercised findings, SBOM download,
+policy versions, and saved evaluations. Scan
+`b14bd5cc-4507-4ece-9599-953888e3cdff` completed with 70 findings, mock false,
+and Trivy 0.75.0+cg.1. Its 25,487-byte SBOM had SHA-256
+`c7e92ee25ffef75801b997cef4803b393a7f7c81d78ee41d84c902bb6bf75356`, also
+verified after application recreation. Policy pass/fail results and repeated
+immutable evaluation identity were checked. Only that project's resources were
+removed; development volumes were preserved.
+
+[Feature CI](https://github.com/christophervalle85/ContainerGuard/actions/runs/38173976883)
+passed all six jobs, including the complete Linux installer, dependency/history
+checks, and three runtime-image gates. The installed scanner was 0.75.0+cg.1;
+no HIGH/CRITICAL findings or exceptions were reported in those passing gates.
+[Main CI](https://github.com/christophervalle85/ContainerGuard/actions/runs/38174484043)
+also passed at merge commit `ceacf5cd497048ebb9c443ed6aefaa617cdf1606`.
+
+The disposable [demonstration PR #10](https://github.com/christophervalle85/ContainerGuard/pull/10)
+then verified workflow rejection without modifying test expectations, gate rules,
+or exceptions. Commit `da3c450284f8c08f38b3797ec40db459ee1b29b3` deliberately
+changed the health response and restored the previous pinned Debian API base.
+[Red CI](https://github.com/christophervalle85/ContainerGuard/actions/runs/38181249064)
+failed two health-response tests while 823 passed. The API image built and scanned
+successfully, then the gate exited 1 with 64 HIGH and 5 CRITICAL findings and no
+exceptions. The other four jobs passed. Commit
+`55eb37d4d01a66f42d7a77da646fcb77f5ea3b53` restored both files exactly to main.
+[Restoration CI](https://github.com/christophervalle85/ContainerGuard/actions/runs/38181629578)
+passed all six jobs. The demonstration PR was closed without merging.
+
+The restored local suite passed 825 tests, lint, and formatting. The 47 focused
+security tests also passed, including unsuccessful scanner execution, timeout,
+missing/invalid reports, wrong scanner version, and stale-report rejection through
+the same runner used in CI. These negative fixtures establish failure behavior;
+they do not replace the real image gate demonstration above.
+
+These are recorded verification results with retained source/run links, not a second
+developer's independent setup test. Live findings and database timestamps can
+change on later scans. No ContainerGuard release has been published yet.
 
 ## Checks
 
@@ -165,7 +207,7 @@ The reviewer independently checked the repair. No Critical, Important, or Minor
 issues remain from that review. The reviewer did not independently rerun the
 service-backed suites or image builds.
 
-The executor accepted these explicit review boundaries, with no deferred code fixes:
+The review used these explicit scope boundaries, with no deferred code fixes:
 
 - Public deployment/authentication/authorization stay outside this localhost work.
 - Distributed execution limits stay outside the supported one-worker deployment.
@@ -182,13 +224,10 @@ The executor accepted these explicit review boundaries, with no deferred code fi
 - Broad accessibility certification, load capacity, and large-image sizing are not
   established by targeted browser checks and a sampled small-image run.
 
-Other execution decisions: retain the existing checkout and leave commits/pushes
-to the learner; keep synthetic gate reports in test builders rather than duplicate
-JSON fixtures; enforce the configured scanner deadline without an extra grace
-period. Full Linux installer execution remains pending CI: automatic approval
-review rejected a proposed tool-container test that mounted the host Docker
-socket because of the broader daemon control it would grant. That command was
-not executed or bypassed. Application containers never received Docker's socket.
+Synthetic gate reports live in test builders rather than duplicate JSON fixtures.
+The configured scanner deadline has no extra grace period. The complete Linux
+installer passed in GitHub CI. Application containers never received Docker's
+socket.
 
 Only verification-owned containers, volumes, and network were removed. The isolated
 worker passed its health checks. A later development-worker check found a live
@@ -199,3 +238,51 @@ probe. A real scan (`959dea6c-44f5-481d-874f-59f6c7d66ca3`) then completed with
 70 findings, mock false, and an available SBOM. That existing deployment still
 uses upstream Trivy 0.75.0; the separate patched-image verification above used
 0.75.0+cg.1. No development volumes were removed or saved jobs edited.
+
+
+## Versioned-image release preflight
+
+The complete release-candidate command passed locally from an uncommitted working
+copy. This verifies the implementation, not the provenance of a published version.
+All three linux/amd64 images passed vulnerability and disclosure checks before
+archive export. The resulting handoff was independently revalidated against the
+archive/configuration/manifest/layer identities and sealed check evidence. The
+local API report contained one MEDIUM finding; the worker contained one MEDIUM
+and one UNKNOWN finding; the frontend had none. These are observations from this
+database snapshot, and passing the gate does not mean zero vulnerabilities.
+
+A fresh, separately named Compose stack completed scan
+`f944a174-f142-41b8-b680-25d222816a29` with 70 real findings using Trivy
+0.75.0+cg.1. Its SBOM SHA-256 was
+`f6406d45e3ab155a5ad941f9993c111da701b8edf2113967a28eedd79894ef3f`.
+Policy evaluation and downloaded artifact bytes survived application recreation.
+Only verification-owned resources were removed, and no containers or volumes with
+the verification prefix remained afterward. Development data was not reused.
+
+Backend verification passed 951 tests with the pinned scanner integration probes
+enabled. Frontend checks passed 181 unit tests and 14 browser tests, along with
+lint, formatting, types and the production build. Python lint/formatting,
+actionlint and patch whitespace checks passed. Focused regressions cover rejected
+source identities, altered archives/evidence, bounded tar extension headers,
+occupied tags, failures at every upload position and unsafe redirect destinations.
+An anonymous read of a public GHCR image verified its redirected configuration
+and digest. Both classic and containerd Docker identity behavior are covered;
+manifest/configuration IDs are kept distinct and tied to the same payload.
+
+Initial disclosure checks blocked public dependency material. Investigation
+located two SQLAlchemy expressions and 18 embedded Trivy values: module checksums,
+public policy examples and packed detector strings. The maintainer approved the
+20 exact-value exceptions now recorded in `security/gitleaks.toml`. All default
+rules remain active, with no file/directory exclusions. Twelve pinned-detector
+tests passed, including generated credentials for every affected rule and the
+existing encoded, binary-adjacent, later-deleted and metadata probes. No raw match
+reports were retained in the release handoff.
+
+No images, tags or GitHub Release were published during this local preflight.
+Linux release-run timing, first-package authorization with GITHUB_TOKEN, public
+package visibility and anonymous installation of the actual version still need
+execution after review and merge. Candidate/publisher job limits are execution
+budgets, not a promise that every operation's maximum deadline can be exhausted.
+Runner interruption can prevent cleanup or retention of a partial-upload record;
+inspect all six destinations before attempting a new version, and never overwrite
+a partially published version. No second developer has independently tried setup.

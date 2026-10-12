@@ -2,3 +2,47 @@ title = "ContainerGuard secret scanning"
 
 [extend]
 useDefault = true
+
+[[rules]]
+id = "duffel-api-token"
+[[rules.allowlists]]
+description = "Exact public dependency code, checksums and embedded detector examples"
+regexTarget = "secret"
+regexes = [
+  "^duffel_test_duffel_live_FLWSECK_TESTshippo_live_shippo_$",
+]
+
+[[rules]]
+id = "generic-api-key"
+[[rules.allowlists]]
+description = "Exact public dependency code, checksums and embedded detector examples"
+regexTarget = "secret"
+regexes = [
+  "^4-v3ry-53cr37-p455w0rd$",
+  "^8gASjJxdtcIieB3OqbkLcF0FfbXVNqKtU5iozD1ssvA=$",
+  "^Curve25519Legacyexpected$",
+  "^GQzua3NA599ASSIICx0iFgiJeO9YkdDARvQsm23ZZuQ=$",
+  "^Np2AbDtf8x6RDHiD8T9LbKJ9gaegeVNa8yNm5FuGKm0=$",
+  "^TXg7OxsOWrAH8J4Zi/gBAZuMw1Dfdd\\+6cca2h4qjRqo=$",
+  "^Z//Vj9N7RA/yS2sDmxyeo7h\\+RR4zbUrd2vrd3Z0TbB4=$",
+  "^b2ggbm8gdGhpcyBpcyBiYWQ=$",
+  "^bIREROb7So6PRlq6KTtdS9MPEjC29OQRkFNlvK2OX8Q=$",
+  "^ignore_unpopulated_attribute=ignore_unpopulated_attribute$",
+  "^keo8NaayQZ6wimpNSmW5OPc283g65QNIiLpZnkHRbnc=$",
+  "^kuQm82SbDrCuO4n7hf2L8zsBtZLuympyq5X/VotfX2A=$",
+  "^lzqbzvz2CSvsjIUZUBNFKtIMsEw7hVLJp0JeSIVmuJs=$",
+  "^passive=attributes\\.PASSIVE_NO_INITIALIZE$",
+  "^peZ/1z27fi9hUOFCAZaHyrpWG5lwe0RJEEEeH0ThlIs=$",
+  "^pxSCpfiji41hpzpPdMCftEUCezpgpqmmDdYiAjCKXxo=$",
+  "^wklUVvHMc9xTQ3rcp49/ISpiMnhbCicJcA6n6S8m7J8=$",
+  "^zRMQ3\\+/LIE5oZ0tVvXwYHC\\+dIkSP5cjNWju7AZU1LOI=$",
+]
+
+[[rules]]
+id = "gitlab-pat"
+[[rules.allowlists]]
+description = "Exact public dependency code, checksums and embedded detector examples"
+regexTarget = "secret"
+regexes = [
+  "^glpat-shpss_shpat_shpca_sh$",
+]

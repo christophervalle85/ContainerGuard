@@ -1,9 +1,10 @@
 # Security and quality design
 
-Status: implemented and locally verified on October 11, 2026. GitHub execution,
-controlled red CI demonstrations, and a repeat from a committed clean checkout
-remain pending. See [verification](../development/verification.md) for evidence
-and scope; this document retains the rationale behind the controls.
+Status: implemented and verified locally and in GitHub CI on October 11, 2026,
+including controlled red/green workflow runs and a committed clean checkout.
+See [verification](../development/verification.md) for evidence and limits;
+independent setup by a second developer remains unverified. This document retains
+the rationale behind the controls.
 
 ## Purpose and scope
 
@@ -16,7 +17,7 @@ stays in place.
 The application remains localhost-only. Authentication, protected public access,
 cloud infrastructure, image publication, signing, and provenance belong to later
 work. This design adds neither automatic interrupted-job reconciliation nor an
-exactly-once guarantee. The learner retains control of commits and pushes.
+exactly-once guarantee.
 
 ## Approach
 
@@ -178,7 +179,7 @@ Run the complete existing backend/frontend checks after relevant changes.
 
 Exercise a fresh checkout without the development database, Redis, caches, or
 untracked files. Use an isolated Compose project with distinct ports and volumes;
-never delete the learner's existing volumes. Follow the documented setup, apply
+never delete existing development volumes. Follow the documented setup, apply
 migrations, submit a real scan, inspect findings, download and verify SBOM bytes,
 create/version a policy, and view its evaluation. Record prerequisites, commands,
 observed results, scanner versions, and date. Stop only resources created by the
