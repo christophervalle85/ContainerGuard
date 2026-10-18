@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import time
 from collections import Counter
+from contextlib import contextmanager
 from pathlib import Path
 
 from scripts.releases.artifacts import inspect_image_archive, read_json
@@ -24,8 +25,9 @@ class DisclosureBlocked(ValueError):
     """A validated secret detector result blocks publication."""
 
 
-def check_disclosure(archive: Path, output: Path) -> dict:
-    output.unlink(missing_ok=True)
+@contextmanager
+def disclosure_scanner():
+    """Yield the shared pinned, bounded, redacted byte detector."""
     environment = {
         key: value
         for key, value in os.environ.items()
@@ -47,7 +49,6 @@ def check_disclosure(archive: Path, output: Path) -> dict:
     except (OSError, subprocess.SubprocessError):
         raise ValueError("Disclosure scanner unavailable") from None
     started = time.monotonic()
-    rules, files, pending = Counter(), 0, bytearray()
     with tempfile.TemporaryDirectory(prefix="containerguard-disclosure-") as directory:
         scratch = Path(directory)
         ignore = scratch / ".gitleaksignore"
@@ -55,6 +56,7 @@ def check_disclosure(archive: Path, output: Path) -> dict:
         report, data = scratch / "report.json", scratch / "input"
 
         def scan(raw):
+            rules = Counter()
             if time.monotonic() - started > IMAGE_TIMEOUT:
                 raise ValueError("Disclosure inspection deadline exceeded")
             data.write_bytes(raw)
@@ -121,6 +123,16 @@ def check_disclosure(archive: Path, output: Path) -> dict:
                     if process.poll() is None:
                         process.kill()
                     process.wait(timeout=5)
+            return dict(rules)
+
+        yield scan
+
+
+def check_disclosure(archive: Path, output: Path) -> dict:
+    output.unlink(missing_ok=True)
+    started = time.monotonic()
+    rules, files, pending = Counter(), 0, bytearray()
+    with disclosure_scanner() as scan:
 
         def visit(kind, stream, size):
             nonlocal files
@@ -130,7 +142,7 @@ def check_disclosure(archive: Path, output: Path) -> dict:
             while chunk := stream.read(256 * 1024):
                 pending.extend(chunk)
                 if len(pending) >= BATCH:
-                    scan(pending)
+                    rules.update(scan(pending))
                     tail = pending[-OVERLAP:]
                     pending.clear()
                     pending.extend(tail)
@@ -141,7 +153,7 @@ def check_disclosure(archive: Path, output: Path) -> dict:
         try:
             info = inspect_image_archive(archive, visitor=visit)
             if pending:
-                scan(pending)
+                rules.update(scan(pending))
         except (OSError, subprocess.SubprocessError):
             raise ValueError("Disclosure inspection failed") from None
     summary = {
