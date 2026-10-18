@@ -105,7 +105,12 @@ def _private_host(host: str) -> bool:
 
 
 def privacy_categories(
-    document, *, allowed_source_urls: frozenset[str], diagnostics=None, role="other"
+    document,
+    *,
+    allowed_source_urls: frozenset[str],
+    diagnostics=None,
+    scp_shapes=None,
+    role="other",
 ) -> set[str]:
     categories = set()
 
@@ -147,6 +152,33 @@ def privacy_categories(
         diagnostics[key] = min(diagnostics.get(key, 0) + 1, 65535)
 
     def location_for(location, key):
+        # Fixed producer schema classes only; never retain an observed JSON path.
+        if role == "native":
+            child = {
+                "native-build-config": {
+                    "internalParameters": "native-internal",
+                    "externalParameters": "native-external",
+                },
+                "native-internal": {
+                    "buildConfig": "native-llb-config",
+                    "dockerfileVersion": "native-dockerfile-version",
+                },
+                "native-llb-config": {
+                    "llbDefinition": "native-llb-steps",
+                    "digestMapping": "native-llb-digest-mapping",
+                },
+                "native-llb-steps": {
+                    "op": "native-llb-op",
+                    "resourceUsage": "native-llb-resource-usage",
+                },
+                "native-llb-op": {"source": "native-llb-source"},
+                "native-llb-source": {
+                    "identifier": "native-llb-source-identifier",
+                    "attrs": "native-llb-source-attrs",
+                },
+            }.get(location, {}).get(key)
+            if child is not None:
+                return child
         if role == "native" and location == "native-other":
             return {
                 "invocation": "native-request",
@@ -198,16 +230,27 @@ def privacy_categories(
                 except ValueError:
                     categories.add("private-source-url")
                     record(location, "url-malformed", candidate)
-            if re.search(r"(?:^|\s)[^\s/@]+@[^\s/:]+:[^\s]+", value):
+            scp_match = re.search(r"(?:^|\s)[^\s/@]+@[^\s/:]+:[^\s]+", value)
+            if scp_match:
                 categories.add("private-source-url")
                 record(location, "scp", value)
+                if scp_shapes is not None:
+                    user, remote = scp_match.group().lstrip().split("@", 1)
+                    host, suffix = remote.split(":", 1)
+                    shape = (
+                        location,
+                        host == "sha256",
+                        bool(re.fullmatch(r"[a-f0-9]{64}", suffix)),
+                        ":" in user,
+                    )
+                    scp_shapes[shape] = min(scp_shapes.get(shape, 0) + 1, 65535)
     return categories
 
 
 def _audit(
     documents, output: Path, *, allowed_source_urls: frozenset[str], roles=()
 ) -> dict:
-    categories, findings, diagnostics = set(), 0, {}
+    categories, findings, diagnostics, scp_shapes = set(), 0, {}, {}
     with disclosure_scanner() as scan:
         for index, (raw, _) in enumerate(documents):
             # Hashing/bounds happened before parsing; scan original bytes unchanged.
@@ -221,6 +264,7 @@ def _audit(
                     parsed,
                     allowed_source_urls=allowed_source_urls,
                     diagnostics=diagnostics,
+                    scp_shapes=scp_shapes,
                     role=roles[index] if roles else "other",
                 )
             )
@@ -236,6 +280,21 @@ def _audit(
                 "count": count,
             }
             for (location, matcher, relation), count in sorted(diagnostics.items())
+        ],
+        "scp_shape_diagnostics": [
+            {
+                "location": location,
+                "host_is_sha256": host_is_sha256,
+                "suffix_is_lower_hex64": suffix_is_lower_hex64,
+                "user_has_colon": user_has_colon,
+                "count": count,
+            }
+            for (
+                location,
+                host_is_sha256,
+                suffix_is_lower_hex64,
+                user_has_colon,
+            ), count in sorted(scp_shapes.items())
         ],
         "documents": [descriptor for _, descriptor in documents],
         "detector": {"version": "8.30.1", "finding_count": findings},

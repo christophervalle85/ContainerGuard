@@ -517,6 +517,145 @@ def test_native_nested_producer_diagnostic_buckets():
         value, allowed_source_urls=frozenset(), diagnostics=diagnostics, role="native"
     ) == {"private-source-url"}
     assert diagnostics == {
-        ("native-build-config", "url-private-host", "other"): 1,
+        ("native-llb-config", "url-private-host", "other"): 1,
         ("native-source-map", "url-private-host", "other"): 1,
     }
+
+
+@pytest.mark.parametrize(
+    "value,location",
+    [
+        (
+            {"internalParameters": {"dockerfileVersion": "user@host:path"}},
+            "native-dockerfile-version",
+        ),
+        ({"internalParameters": {"custom": "user@host:path"}}, "native-internal"),
+        ({"externalParameters": {"custom": "user@host:path"}}, "native-external"),
+        (
+            {
+                "internalParameters": {
+                    "buildConfig": {"digestMapping": {"user@host:path": "step0"}}
+                }
+            },
+            "native-llb-digest-mapping",
+        ),
+        (
+            {
+                "internalParameters": {
+                    "buildConfig": {
+                        "llbDefinition": [
+                            {"resourceUsage": {"custom": "user@host:path"}}
+                        ]
+                    }
+                }
+            },
+            "native-llb-resource-usage",
+        ),
+        (
+            {
+                "internalParameters": {
+                    "buildConfig": {
+                        "llbDefinition": [
+                            {"op": {"source": {"identifier": "user@host:path"}}}
+                        ]
+                    }
+                }
+            },
+            "native-llb-source-identifier",
+        ),
+        (
+            {
+                "internalParameters": {
+                    "buildConfig": {
+                        "llbDefinition": [
+                            {"op": {"source": {"attrs": {"custom": "user@host:path"}}}}
+                        ]
+                    }
+                }
+            },
+            "native-llb-source-attrs",
+        ),
+        (
+            {
+                "internalParameters": {
+                    "buildConfig": {
+                        "llbDefinition": [
+                            {"op": {"file": {"custom": "user@host:path"}}}
+                        ]
+                    }
+                }
+            },
+            "native-llb-op",
+        ),
+        (
+            {
+                "internalParameters": {
+                    "buildConfig": {"llbDefinition": [{"custom": "user@host:path"}]}
+                }
+            },
+            "native-llb-steps",
+        ),
+    ],
+)
+def test_private_diagnostics_isolate_native_producer_fields(value, location):
+    from scripts.releases.supply_chain import evidence
+
+    document = {"buildDefinition": value}
+    diagnostics = {}
+    assert evidence.privacy_categories(document, allowed_source_urls=frozenset()) == {
+        "private-source-url"
+    }
+    assert evidence.privacy_categories(
+        document,
+        allowed_source_urls=frozenset(),
+        diagnostics=diagnostics,
+        role="native",
+    ) == {"private-source-url"}
+    assert diagnostics == {(location, "scp", "other"): 1}
+    assert "user@host:path" not in repr(diagnostics)
+    assert "custom" not in repr(diagnostics)
+
+
+@pytest.mark.parametrize("digest_host", [False, True])
+@pytest.mark.parametrize("hex_suffix", [False, True])
+@pytest.mark.parametrize("colon_user", [False, True])
+def test_scp_shape_diagnostics_are_fixed_booleans(digest_host, hex_suffix, colon_user):
+    from scripts.releases.supply_chain import evidence
+
+    user = "raw-marker:tag" if colon_user else "raw-marker"
+    host = "sha256" if digest_host else "raw-marker"
+    suffix = "a" * 64 if hex_suffix else "raw-marker"
+    value = {"raw-marker": f"{user}@{host}:{suffix}"}
+    shapes = {}
+    assert evidence.privacy_categories(
+        value, allowed_source_urls=frozenset(), scp_shapes=shapes
+    ) == {"private-source-url"}
+    assert shapes == {("other", digest_host, hex_suffix, colon_user): 1}
+    assert "raw-marker" not in repr(shapes)
+
+
+def test_scp_shape_summary_is_bounded_and_contains_no_candidate(tmp_path, scanner):
+    from scripts.releases.supply_chain import evidence
+
+    value = "raw-marker:tag@sha256:" + "a" * 64
+    shapes = {}
+    evidence.privacy_categories(
+        {"raw-marker": [value] * 65540},
+        allowed_source_urls=frozenset(),
+        scp_shapes=shapes,
+    )
+    assert shapes == {("other", True, True, True): 65535}
+    output = tmp_path / "audit.json"
+    with pytest.raises(evidence.EvidenceDisclosureBlocked) as blocked:
+        evidence.check_disclosure([document(tmp_path, {"raw-marker": value})], output)
+    assert blocked.value.summary["scp_shape_diagnostics"] == [
+        {
+            "location": "other",
+            "host_is_sha256": True,
+            "suffix_is_lower_hex64": True,
+            "user_has_colon": True,
+            "count": 1,
+        }
+    ]
+    assert "raw-marker" not in output.read_text()
+    assert "a" * 64 not in output.read_text()
