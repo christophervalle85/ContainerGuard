@@ -93,7 +93,12 @@ def test_synthetic_contract_source_and_manifest():
     )
 
 
-def test_probe_builds_once_and_cleans_only_owned_resources(tmp_path, monkeypatch):
+@pytest.mark.parametrize("unsupported_option", [False, True])
+def test_probe_builds_once_and_cleans_only_owned_resources(
+    tmp_path, monkeypatch, unsupported_option
+):
+    import subprocess
+
     from scripts import probe_release_supply_chain as probe
 
     commands = []
@@ -102,6 +107,13 @@ def test_probe_builds_once_and_cleans_only_owned_resources(tmp_path, monkeypatch
 
     def command(args, **kwargs):
         commands.append(args)
+        if (
+            args[0].endswith("buildx")
+            and "create" in args
+            and "provenance-add-gha=false" in args
+            and unsupported_option
+        ):
+            raise subprocess.CalledProcessError(1, args, stderr="unsupported option")
         if args[:2] == ["git", "rev-parse"]:
             return "a" * 40
         if args[:3] == ["docker", "inspect", "--format"]:
@@ -119,10 +131,20 @@ def test_probe_builds_once_and_cleans_only_owned_resources(tmp_path, monkeypatch
     monkeypatch.setattr(probe, "command", command)
     result = probe.run_probe(tmp_path)
     assert result["passed"] is False
-    assert result["failure_stage"] == "fixture-build"
-    assert result["failure"] == "requirement-failed"
+    creates = [c for c in commands if c[0].endswith("buildx") and "create" in c]
+    assert len(creates) == 1
+    assert creates[0].count("provenance-add-gha=false") == 1
+    option_index = creates[0].index("provenance-add-gha=false")
+    assert creates[0][option_index - 1] == "--driver-opt"
+    assert result["failure_stage"] == (
+        "builder-start" if unsupported_option else "fixture-build"
+    )
+    assert result["failure"] == (
+        "process-failed" if unsupported_option else "requirement-failed"
+    )
     builds = [c for c in commands if c[0].endswith("buildx") and "build" in c]
-    assert len(builds) == 1
+    assert len(builds) == (0 if unsupported_option else 1)
+    assert result["build_invocations"] == len(builds)
     cleanup = [c for c in commands if "rm" in c]
     assert cleanup
     assert all(any(str(a).startswith("cg-probe-") for a in c) for c in cleanup)

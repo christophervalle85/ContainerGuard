@@ -70,7 +70,14 @@ entry point, target platform, build invocation and resolved material digests.
 Reject absent, dirty, unexpected or conflicting source metadata. GitHub context
 also records the release tag, source SHA, workflow, run ID and attempt in a small
 versioned build record. It supplements, rather than substitutes for, native build
-provenance. Do not invent complete dependency coverage or reproducibility claims.
+provenance. Disable Buildx's optional GitHub Actions event-context injection at
+builder creation with `--driver-opt provenance-add-gha=false`; an unsupported
+option fails before the build, without fallback. This excludes the full event
+payload and incidental runner context before provenance generation. Capture the
+complete native `mode=max` predicate unchanged and retain all source, platform,
+history and output checks. The required trusted GitHub fields in the versioned
+build record remain required. Do not invent complete dependency coverage or
+reproducibility claims.
 
 Validate the build metadata's output manifest/configuration against the canonical
 archive. Keep archive hashes, OCI index hashes, runnable manifest digests, config

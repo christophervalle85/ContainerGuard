@@ -561,6 +561,8 @@ def run_probe(workspace: Path) -> dict:
                     "--driver-opt",
                     "network=host",
                     "--driver-opt",
+                    "provenance-add-gha=false",
+                    "--driver-opt",
                     "image=" + manifest["buildkit"]["image"],
                 ]
             )
