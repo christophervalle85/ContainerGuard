@@ -154,6 +154,8 @@ def privacy_categories(
     def location_for(location, key):
         # Fixed producer schema classes only; never retain an observed JSON path.
         if role == "native":
+            if location == "native-internal" and key == "github_event_payload":
+                return "native-github-event"
             child = {
                 "native-build-config": {
                     "internalParameters": "native-internal",
@@ -162,6 +164,8 @@ def privacy_categories(
                 "native-internal": {
                     "buildConfig": "native-llb-config",
                     "dockerfileVersion": "native-dockerfile-version",
+                    "builderPlatform": "native-builder-platform",
+                    "targetPlatform": "native-target-platform",
                 },
                 "native-llb-config": {
                     "llbDefinition": "native-llb-steps",
@@ -179,6 +183,8 @@ def privacy_categories(
             }.get(location, {}).get(key)
             if child is not None:
                 return child
+            if location == "native-internal":
+                return "native-custom-env"
         if role == "native" and location == "native-other":
             return {
                 "invocation": "native-request",
@@ -200,9 +206,19 @@ def privacy_categories(
         "metadata": "metadata",
         "result": "result-other",
     }.get(role, "other")
-    pending = [(document, initial_location)]
+
+    def event_child(state, key):
+        # A finite schema state, never an observed key/path retained in output.
+        return {
+            "root": {"repository": "repository", "pull_request": "pull-request"},
+            "pull-request": {"head": "branch", "base": "branch"},
+            "branch": {"repo": "repository"},
+            "repository": {"ssh_url": "ssh-url"},
+        }.get(state, {}).get(key, "other")
+
+    pending = [(document, initial_location, "value", None)]
     while pending:
-        value, location = pending.pop()
+        value, location, node_kind, event_state = pending.pop()
         if isinstance(value, dict):
             for key, item in value.items():
                 if (
@@ -212,9 +228,30 @@ def privacy_categories(
                 ):
                     categories.add("runtime-environment")
                 child_location = location_for(location, key)
-                pending.extend(((key, child_location), (item, child_location)))
+                child_state = None
+                if event_state is not None:
+                    child_state = event_child(event_state, key)
+                    child_location = (
+                        "native-github-repository-ssh-url"
+                        if child_state == "ssh-url"
+                        else "native-github-event"
+                    )
+                elif (
+                    role == "native"
+                    and location == "native-internal"
+                    and key == "github_event_payload"
+                ):
+                    child_state = "root"
+                pending.extend(
+                    (
+                        (key, child_location, "key", child_state),
+                        (item, child_location, "value", child_state),
+                    )
+                )
         elif isinstance(value, list):
-            pending.extend((item, location) for item in value)
+            if event_state is not None:
+                location, event_state = "native-github-event", "other"
+            pending.extend((item, location, "value", event_state) for item in value)
         elif isinstance(value, str):
             if HOME.search(value):
                 categories.add("user-home-path")
@@ -239,6 +276,7 @@ def privacy_categories(
                     host, suffix = remote.split(":", 1)
                     shape = (
                         location,
+                        node_kind,
                         host == "sha256",
                         bool(re.fullmatch(r"[a-f0-9]{64}", suffix)),
                         ":" in user,
@@ -284,6 +322,7 @@ def _audit(
         "scp_shape_diagnostics": [
             {
                 "location": location,
+                "node_kind": node_kind,
                 "host_is_sha256": host_is_sha256,
                 "suffix_is_lower_hex64": suffix_is_lower_hex64,
                 "user_has_colon": user_has_colon,
@@ -291,6 +330,7 @@ def _audit(
             }
             for (
                 location,
+                node_kind,
                 host_is_sha256,
                 suffix_is_lower_hex64,
                 user_has_colon,

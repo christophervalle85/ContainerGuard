@@ -529,7 +529,7 @@ def test_native_nested_producer_diagnostic_buckets():
             {"internalParameters": {"dockerfileVersion": "user@host:path"}},
             "native-dockerfile-version",
         ),
-        ({"internalParameters": {"custom": "user@host:path"}}, "native-internal"),
+        ({"internalParameters": {"custom": "user@host:path"}}, "native-custom-env"),
         ({"externalParameters": {"custom": "user@host:path"}}, "native-external"),
         (
             {
@@ -613,7 +613,7 @@ def test_private_diagnostics_isolate_native_producer_fields(value, location):
     ) == {"private-source-url"}
     assert diagnostics == {(location, "scp", "other"): 1}
     assert "user@host:path" not in repr(diagnostics)
-    assert "custom" not in repr(diagnostics)
+    assert "'custom'" not in repr(diagnostics)
 
 
 @pytest.mark.parametrize("digest_host", [False, True])
@@ -630,7 +630,7 @@ def test_scp_shape_diagnostics_are_fixed_booleans(digest_host, hex_suffix, colon
     assert evidence.privacy_categories(
         value, allowed_source_urls=frozenset(), scp_shapes=shapes
     ) == {"private-source-url"}
-    assert shapes == {("other", digest_host, hex_suffix, colon_user): 1}
+    assert shapes == {("other", "value", digest_host, hex_suffix, colon_user): 1}
     assert "raw-marker" not in repr(shapes)
 
 
@@ -644,13 +644,14 @@ def test_scp_shape_summary_is_bounded_and_contains_no_candidate(tmp_path, scanne
         allowed_source_urls=frozenset(),
         scp_shapes=shapes,
     )
-    assert shapes == {("other", True, True, True): 65535}
+    assert shapes == {("other", "value", True, True, True): 65535}
     output = tmp_path / "audit.json"
     with pytest.raises(evidence.EvidenceDisclosureBlocked) as blocked:
         evidence.check_disclosure([document(tmp_path, {"raw-marker": value})], output)
     assert blocked.value.summary["scp_shape_diagnostics"] == [
         {
             "location": "other",
+            "node_kind": "value",
             "host_is_sha256": True,
             "suffix_is_lower_hex64": True,
             "user_has_colon": True,
@@ -659,3 +660,136 @@ def test_scp_shape_summary_is_bounded_and_contains_no_candidate(tmp_path, scanne
     ]
     assert "raw-marker" not in output.read_text()
     assert "a" * 64 not in output.read_text()
+
+
+@pytest.mark.parametrize(
+    "field,location",
+    [
+        ("builderPlatform", "native-builder-platform"),
+        ("targetPlatform", "native-target-platform"),
+        ("raw-marker", "native-custom-env"),
+    ],
+)
+@pytest.mark.parametrize("node_kind", ["key", "value"])
+def test_scp_diagnostics_distinguish_keys_and_internal_field_classes(
+    field, location, node_kind
+):
+    from scripts.releases.supply_chain import evidence
+
+    candidate = "raw-marker@raw-marker:raw-marker"
+    inner = {candidate: "public"} if node_kind == "key" else candidate
+    value = {"buildDefinition": {"internalParameters": {field: inner}}}
+    shapes, diagnostics = {}, {}
+    assert evidence.privacy_categories(value, allowed_source_urls=frozenset()) == {
+        "private-source-url"
+    }
+    assert evidence.privacy_categories(
+        value,
+        allowed_source_urls=frozenset(),
+        diagnostics=diagnostics,
+        scp_shapes=shapes,
+        role="native",
+    ) == {"private-source-url"}
+    assert diagnostics == {(location, "scp", "other"): 1}
+    assert shapes == {(location, node_kind, False, False, False): 1}
+    assert "raw-marker" not in repr((diagnostics, shapes))
+
+
+def test_unknown_internal_key_remains_scanned_and_is_classified_as_key():
+    from scripts.releases.supply_chain import evidence
+
+    shapes = {}
+    value = {
+        "buildDefinition": {"internalParameters": {"raw-marker@host:path": "public"}}
+    }
+    assert evidence.privacy_categories(
+        value, allowed_source_urls=frozenset(), scp_shapes=shapes, role="native"
+    ) == {"private-source-url"}
+    assert shapes == {("native-custom-env", "key", False, False, False): 1}
+
+
+@pytest.mark.parametrize("node_kind", ["key", "value"])
+def test_github_event_repository_ssh_field_has_only_fixed_diagnostics(node_kind):
+    from scripts.releases.supply_chain import evidence
+
+    candidate = "raw-marker@raw-marker:raw-marker"
+    inner = {candidate: "public"} if node_kind == "key" else candidate
+    value = {
+        "buildDefinition": {
+            "internalParameters": {
+                "github_event_payload": {"repository": {"ssh_url": inner}}
+            }
+        }
+    }
+    shapes = {}
+    assert evidence.privacy_categories(
+        value, allowed_source_urls=frozenset(), scp_shapes=shapes, role="native"
+    ) == {"private-source-url"}
+    location = (
+        "native-github-event"
+        if node_kind == "key"
+        else "native-github-repository-ssh-url"
+    )
+    assert shapes == {(location, node_kind, False, False, False): 1}
+    assert "raw-marker" not in repr(shapes)
+
+
+def test_public_github_event_shape_reproduces_three_blocked_ssh_locators():
+    from scripts.releases.supply_chain import evidence
+
+    repository = {"ssh_url": "git@github.com:example/public-fixture.git"}
+    value = {
+        "buildDefinition": {
+            "internalParameters": {
+                "github_event_payload": {
+                    "repository": repository,
+                    "pull_request": {
+                        "head": {"repo": repository},
+                        "base": {"repo": repository},
+                    },
+                }
+            }
+        }
+    }
+    diagnostics, shapes = {}, {}
+    assert evidence.privacy_categories(
+        value,
+        allowed_source_urls=frozenset(),
+        diagnostics=diagnostics,
+        scp_shapes=shapes,
+        role="native",
+    ) == {"private-source-url"}
+    assert diagnostics == {("native-github-repository-ssh-url", "scp", "other"): 3}
+    assert shapes == {
+        ("native-github-repository-ssh-url", "value", False, False, False): 3
+    }
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"decoy": {"ssh_url": "user@host:path"}},
+        {"decoy": {"repository": {"ssh_url": "user@host:path"}}},
+        {"repository": {"nested": {"ssh_url": "user@host:path"}}},
+        {"pull_request": {"other": {"repo": {"ssh_url": "user@host:path"}}}},
+        {"pull_request": {"head": {"nested": {"repo": {"ssh_url": "user@host:path"}}}}},
+        {"repository": [{"ssh_url": "user@host:path"}]},
+        {"repository": {"ssh_url": {"nested": "user@host:path"}}},
+    ],
+)
+def test_nested_event_decoys_are_not_attributed_to_repository_ssh_field(payload):
+    from scripts.releases.supply_chain import evidence
+
+    value = {
+        "buildDefinition": {"internalParameters": {"github_event_payload": payload}}
+    }
+    diagnostics, shapes = {}, {}
+    assert evidence.privacy_categories(
+        value,
+        allowed_source_urls=frozenset(),
+        diagnostics=diagnostics,
+        scp_shapes=shapes,
+        role="native",
+    ) == {"private-source-url"}
+    assert diagnostics == {("native-github-event", "scp", "other"): 1}
+    assert shapes == {("native-github-event", "value", False, False, False): 1}
