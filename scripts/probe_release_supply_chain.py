@@ -78,6 +78,103 @@ def read(path: Path) -> bytes:
     return data
 
 
+def assessment_failures(
+    native: dict,
+    commit: str,
+    manifest: str,
+    copied: str,
+    source: str = SOURCE,
+    *,
+    expected_invocation: str,
+) -> list[str]:
+    """Return fixed, bounded check codes only; never predicate values or errors."""
+
+    def at(*keys):
+        value = native
+        for key in keys:
+            value = value[key]
+        return value
+
+    def vcs():
+        return at("runDetails", "metadata").get("buildkit_metadata", {}).get("vcs", {})
+
+    def materials():
+        return at("buildDefinition", "resolvedDependencies")
+
+    checks = (
+        ("manifest-format", lambda: DIGEST.fullmatch(manifest)),
+        ("manifest-copy-digest", lambda: manifest == copied),
+        ("native-build-type", lambda: at("buildDefinition", "buildType") == BUILD_TYPE),
+        (
+            "config-source-uri",
+            lambda: (
+                at("buildDefinition", "externalParameters", "configSource", "uri")
+                == source + "#" + commit
+            ),
+        ),
+        (
+            "config-source-revision",
+            lambda: (
+                at("buildDefinition", "externalParameters", "configSource", "digest")
+                == {"sha1": commit}
+            ),
+        ),
+        (
+            "dockerfile-entrypoint",
+            lambda: (
+                at("buildDefinition", "externalParameters", "configSource", "path")
+                == "Dockerfile"
+            ),
+        ),
+        (
+            "frontend",
+            lambda: (
+                at("buildDefinition", "externalParameters", "request", "frontend")
+                == "dockerfile.v0"
+            ),
+        ),
+        (
+            "native-target-platform",
+            lambda: (
+                at("buildDefinition", "internalParameters", "targetPlatform")
+                == "linux/amd64"
+            ),
+        ),
+        (
+            "source-material-missing",
+            lambda: {"uri": source, "digest": {"sha1": commit}} in materials(),
+        ),
+        (
+            "conflicting-source-material",
+            lambda: all(
+                item["digest"] == {"sha1": commit}
+                for item in materials()
+                if item.get("uri") == source
+            ),
+        ),
+        (
+            "material-digests-missing",
+            lambda: all(item.get("digest") for item in materials()),
+        ),
+        (
+            "invocation-id",
+            lambda: at("runDetails", "metadata", "invocationId") == expected_invocation,
+        ),
+        ("expected-invocation-empty", lambda: bool(expected_invocation)),
+        ("vcs-revision", lambda: vcs().get("revision", commit) == commit),
+        ("vcs-source", lambda: vcs().get("source", source) == source),
+    )
+    failures = []
+    for code, check in checks:
+        try:
+            passed = bool(check())
+        except (KeyError, TypeError, AttributeError):
+            passed = False
+        if not passed:
+            failures.append(code)
+    return failures
+
+
 def assess(
     native: dict,
     commit: str,
@@ -88,37 +185,14 @@ def assess(
     expected_invocation: str,
 ) -> bool:
     """Require native SLSA1 source, actual target, exact invocation and output."""
-    try:
-        definition = native["buildDefinition"]
-        external = definition["externalParameters"]
-        config = external["configSource"]
-        materials = definition["resolvedDependencies"]
-        metadata = native["runDetails"]["metadata"]
-        vcs = metadata.get("buildkit_metadata", {}).get("vcs", {})
-        material = {"uri": source, "digest": {"sha1": commit}}
-        return bool(
-            DIGEST.fullmatch(manifest)
-            and manifest == copied
-            and definition["buildType"] == BUILD_TYPE
-            and config["uri"] == source + "#" + commit
-            and config["digest"] == {"sha1": commit}
-            and config["path"] == "Dockerfile"
-            and external["request"]["frontend"] == "dockerfile.v0"
-            and definition["internalParameters"]["targetPlatform"] == "linux/amd64"
-            and material in materials
-            and all(
-                item["digest"] == {"sha1": commit}
-                for item in materials
-                if item.get("uri") == source
-            )
-            and all(item.get("digest") for item in materials)
-            and metadata["invocationId"] == expected_invocation
-            and bool(expected_invocation)
-            and vcs.get("revision", commit) == commit
-            and vcs.get("source", source) == source
-        )
-    except (KeyError, TypeError, AttributeError):
-        return False
+    return not assessment_failures(
+        native,
+        commit,
+        manifest,
+        copied,
+        source,
+        expected_invocation=expected_invocation,
+    )
 
 
 def bounded_command(args: list[str]) -> bytes:
@@ -575,7 +649,7 @@ def run_probe(workspace: Path) -> dict:
                 )
                 result["copied_digest"] = copied
                 stage = "native-validation"
-                result["passed"] = assess(
+                result["validation_failures"] = assessment_failures(
                     decode(raw),
                     commit,
                     identity["manifest"],
@@ -583,6 +657,7 @@ def run_probe(workspace: Path) -> dict:
                     source,
                     expected_invocation=receipt["invocation_id"],
                 )
+                result["passed"] = not result["validation_failures"]
                 if not result["passed"]:
                     result["failure"] = "native-source-or-manifest-check"
                     result["failure_stage"] = stage

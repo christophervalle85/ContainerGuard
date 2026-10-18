@@ -420,3 +420,171 @@ func main() {
         command, cwd=tmp_path, check=True, capture_output=True, text=True, timeout=180
     )
     assert json.loads(completed.stdout) == record
+
+
+@pytest.mark.parametrize(
+    "code,path,value",
+    [
+        ("native-build-type", ["buildDefinition", "buildType"], "private-native-value"),
+        (
+            "config-source-uri",
+            ["buildDefinition", "externalParameters", "configSource", "uri"],
+            "private-native-value",
+        ),
+        (
+            "config-source-revision",
+            ["buildDefinition", "externalParameters", "configSource", "digest"],
+            {"sha1": "c" * 40},
+        ),
+        (
+            "dockerfile-entrypoint",
+            ["buildDefinition", "externalParameters", "configSource", "path"],
+            "/private/Dockerfile",
+        ),
+        (
+            "frontend",
+            ["buildDefinition", "externalParameters", "request", "frontend"],
+            "private-native-value",
+        ),
+        (
+            "native-target-platform",
+            ["buildDefinition", "internalParameters", "targetPlatform"],
+            None,
+        ),
+        ("source-material-missing", ["buildDefinition", "resolvedDependencies"], []),
+        (
+            "conflicting-source-material",
+            ["buildDefinition", "resolvedDependencies"],
+            [
+                {
+                    "uri": "https://github.com/containerguard-probe/fixture",
+                    "digest": {"sha1": "a" * 40},
+                },
+                {
+                    "uri": "https://github.com/containerguard-probe/fixture",
+                    "digest": {"sha1": "c" * 40},
+                },
+            ],
+        ),
+        (
+            "material-digests-missing",
+            ["buildDefinition", "resolvedDependencies"],
+            [
+                {
+                    "uri": "https://github.com/containerguard-probe/fixture",
+                    "digest": {"sha1": "a" * 40},
+                },
+                {"uri": "private-native-value", "digest": {}},
+            ],
+        ),
+        (
+            "invocation-id",
+            ["runDetails", "metadata", "invocationId"],
+            "private-native-value",
+        ),
+        (
+            "vcs-revision",
+            ["runDetails", "metadata", "buildkit_metadata", "vcs", "revision"],
+            "private-native-value",
+        ),
+        (
+            "vcs-source",
+            ["runDetails", "metadata", "buildkit_metadata", "vcs", "source"],
+            "private-native-value",
+        ),
+    ],
+)
+def test_assessment_reports_only_failed_check_codes(code, path, value):
+    import json
+
+    from scripts import probe_release_supply_chain as probe
+
+    native = synthetic_contract_predicate()
+    current = native
+    for key in path[:-1]:
+        current = current[key]
+    current[path[-1]] = value
+    failures = probe.assessment_failures(
+        native,
+        "a" * 40,
+        "sha256:" + "b" * 64,
+        "sha256:" + "b" * 64,
+        expected_invocation="i" * 25,
+    )
+    assert failures == [code]
+    assert not probe.assess(
+        native,
+        "a" * 40,
+        "sha256:" + "b" * 64,
+        "sha256:" + "b" * 64,
+        expected_invocation="i" * 25,
+    )
+    assert "private" not in json.dumps(failures)
+
+
+@pytest.mark.parametrize(
+    "manifest,copied,invocation,expected",
+    [
+        ("secret-path", "secret-path", "i" * 25, ["manifest-format"]),
+        (
+            "sha256:" + "b" * 64,
+            "sha256:" + "c" * 64,
+            "i" * 25,
+            ["manifest-copy-digest"],
+        ),
+        (
+            "sha256:" + "b" * 64,
+            "sha256:" + "b" * 64,
+            "",
+            ["invocation-id", "expected-invocation-empty"],
+        ),
+        ("sha256:" + "b" * 64, "sha256:" + "b" * 64, "i" * 25, []),
+    ],
+)
+def test_assessment_reports_digest_and_invocation_checks(
+    manifest, copied, invocation, expected
+):
+    from scripts import probe_release_supply_chain as probe
+
+    assert (
+        probe.assessment_failures(
+            synthetic_contract_predicate(),
+            "a" * 40,
+            manifest,
+            copied,
+            expected_invocation=invocation,
+        )
+        == expected
+    )
+
+
+def test_assessment_malformed_structure_has_only_bounded_safe_codes():
+    import json
+
+    from scripts import probe_release_supply_chain as probe
+
+    native = {"buildDefinition": "private-path/token=secret", "runDetails": None}
+    failures = probe.assessment_failures(
+        native,
+        "a" * 40,
+        "sha256:" + "b" * 64,
+        "sha256:" + "b" * 64,
+        expected_invocation="i" * 25,
+    )
+    assert failures == [
+        "native-build-type",
+        "config-source-uri",
+        "config-source-revision",
+        "dockerfile-entrypoint",
+        "frontend",
+        "native-target-platform",
+        "source-material-missing",
+        "conflicting-source-material",
+        "material-digests-missing",
+        "invocation-id",
+        "vcs-revision",
+        "vcs-source",
+    ]
+    assert len(failures) <= 15
+    assert "private" not in json.dumps(failures)
+    assert "secret" not in json.dumps(failures)
