@@ -23,7 +23,8 @@ def synthetic_contract_predicate():
             },
             "resolvedDependencies": [
                 {
-                    "uri": "https://github.com/containerguard-probe/fixture",
+                    "uri": "https://github.com/containerguard-probe/fixture#"
+                    + "a" * 40,
                     "digest": {"sha1": "a" * 40},
                 }
             ],
@@ -457,11 +458,13 @@ func main() {
             ["buildDefinition", "resolvedDependencies"],
             [
                 {
-                    "uri": "https://github.com/containerguard-probe/fixture",
+                    "uri": "https://github.com/containerguard-probe/fixture#"
+                    + "a" * 40,
                     "digest": {"sha1": "a" * 40},
                 },
                 {
-                    "uri": "https://github.com/containerguard-probe/fixture",
+                    "uri": "https://github.com/containerguard-probe/fixture#"
+                    + "a" * 40,
                     "digest": {"sha1": "c" * 40},
                 },
             ],
@@ -471,7 +474,8 @@ func main() {
             ["buildDefinition", "resolvedDependencies"],
             [
                 {
-                    "uri": "https://github.com/containerguard-probe/fixture",
+                    "uri": "https://github.com/containerguard-probe/fixture#"
+                    + "a" * 40,
                     "digest": {"sha1": "a" * 40},
                 },
                 {"uri": "private-native-value", "digest": {}},
@@ -588,3 +592,54 @@ def test_assessment_malformed_structure_has_only_bounded_safe_codes():
     assert len(failures) <= 15
     assert "private" not in json.dumps(failures)
     assert "secret" not in json.dumps(failures)
+
+
+@pytest.mark.parametrize(
+    "uri,digest,extra",
+    [
+        ("https://github.com/containerguard-probe/fixture", "a" * 40, False),
+        (
+            "https://github.com/containerguard-probe/fixture#" + "c" * 40,
+            "a" * 40,
+            False,
+        ),
+        (
+            "https://github.com/containerguard-probe/fixture#" + "a" * 40,
+            "c" * 40,
+            False,
+        ),
+        ("https://github.com/containerguard-probe/fixture#" + "c" * 40, "a" * 40, True),
+        ("https://github.com/containerguard-probe/fixture", "c" * 40, True),
+        ("https://github.com/containerguard-probe/fixture", "a" * 40, True),
+        (
+            "https://github.com/containerguard-probe/fixture-lookalike#" + "a" * 40,
+            "a" * 40,
+            False,
+        ),
+    ],
+)
+def test_native_git_material_requires_exact_commit_locator(uri, digest, extra):
+    from scripts import probe_release_supply_chain as probe
+
+    native = synthetic_contract_predicate()
+    dependency = {"uri": uri, "digest": {"sha1": digest}}
+    if extra:
+        native["buildDefinition"]["resolvedDependencies"].append(dependency)
+    else:
+        native["buildDefinition"]["resolvedDependencies"] = [dependency]
+    assert not assess(
+        probe, native, "a" * 40, "sha256:" + "b" * 64, "sha256:" + "b" * 64
+    )
+
+
+def test_unrelated_repository_prefix_is_not_a_conflicting_source():
+    from scripts import probe_release_supply_chain as probe
+
+    native = synthetic_contract_predicate()
+    native["buildDefinition"]["resolvedDependencies"].append(
+        {
+            "uri": "https://github.com/containerguard-probe/fixture-other#" + "c" * 40,
+            "digest": {"sha1": "c" * 40},
+        }
+    )
+    assert assess(probe, native, "a" * 40, "sha256:" + "b" * 64, "sha256:" + "b" * 64)

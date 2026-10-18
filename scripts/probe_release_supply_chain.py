@@ -142,14 +142,19 @@ def assessment_failures(
         ),
         (
             "source-material-missing",
-            lambda: {"uri": source, "digest": {"sha1": commit}} in materials(),
+            lambda: (
+                {"uri": source + "#" + commit, "digest": {"sha1": commit}}
+                in materials()
+            ),
         ),
         (
             "conflicting-source-material",
             lambda: all(
-                item["digest"] == {"sha1": commit}
+                item["uri"] == source + "#" + commit
+                and item["digest"] == {"sha1": commit}
                 for item in materials()
                 if item.get("uri") == source
+                or item.get("uri", "").startswith(source + "#")
             ),
         ),
         (
