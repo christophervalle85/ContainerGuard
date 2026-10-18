@@ -8,7 +8,7 @@
 
 **Spec:** [Release supply-chain security](../architecture/supply-chain.md).
 
-Status: implementation in progress; native SLSA v1 capture correction approved. Task 1 still requires real Linux qualification before production integration.
+Status: implementation in progress; native SLSA v1 capture correction approved. Task 1 has passed native Linux transport qualification; evidence-disclosure qualification remains required before production integration.
 
 ## Global constraints
 
@@ -51,6 +51,8 @@ Modify `candidate.py`, `publish.py`, `commands.py`, `disclosure.py`, `compose.py
 Place new tests in corresponding `tests/test_supply_chain_*.py` files and extend existing `tests/test_release_*.py` regressions. Put sanitized, small real-tool fixtures in `tests/fixtures/releases/`; generated keys, archives, bundles and execution records remain outside tracked source.
 
 ## Task 1: Pin tools and prove the transport path
+
+**Qualification follow-up:** run the bounded evidence-disclosure check inside the probe job while the raw predicate is still present. Reuse the pinned detector and shared release-disclosure mechanism; log only safe categories, counts, sizes and hashes. No raw evidence upload is authorized. The minimal document-checking portion of Task 3 is pulled forward for this checkpoint; Task 3 extends and reuses that implementation rather than duplicating it.
 
 **Files:** create `security/release-tools.json`, `scripts/install_release_tools.sh`, `scripts/releases/supply_chain/{__init__,tools}.py`, `scripts/probe_release_supply_chain.py`, `tests/test_supply_chain_tools.py`, `tests/test_supply_chain_probe.py`, `.github/workflows/supply-chain-probe.yml`; extend the Python-3.12 syntax regression.
 

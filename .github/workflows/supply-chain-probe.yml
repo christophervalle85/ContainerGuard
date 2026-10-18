@@ -8,6 +8,11 @@ on:
       - scripts/install_release_tools.sh
       - scripts/probe_release_supply_chain.py
       - scripts/releases/supply_chain/**
+      - scripts/releases/disclosure.py
+      - scripts/install_security_tools.sh
+      - security/tools.json
+      - security/gitleaks.toml
+      - tests/test_release_disclosure.py
       - tests/test_supply_chain_*.py
       - .github/workflows/supply-chain-probe.yml
 
@@ -30,3 +35,14 @@ jobs:
         env:
           CG_RELEASE_TOOLS: ${{ runner.temp }}/release-tools
         run: python3 scripts/probe_release_supply_chain.py --output-dir "$RUNNER_TEMP/probe"
+      - name: Install pinned evidence disclosure tools
+        shell: bash
+        run: |
+          if ! bash scripts/install_security_tools.sh "$RUNNER_TEMP/security-tools" > "$RUNNER_TEMP/evidence-tool-install.log" 2>&1; then
+            printf '%s\n' '{"passed":false,"failure":"audit-tool-install-failed"}'
+            exit 1
+          fi
+      - name: Audit unchanged build evidence in runner storage
+        shell: bash
+        run: |
+          PATH="$RUNNER_TEMP/security-tools:$PATH" python3 -m scripts.releases.supply_chain.evidence --probe-dir "$RUNNER_TEMP/probe"
