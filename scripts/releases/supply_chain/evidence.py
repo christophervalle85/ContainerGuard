@@ -104,7 +104,9 @@ def _private_host(host: str) -> bool:
         )
 
 
-def privacy_categories(document, *, allowed_source_urls: frozenset[str]) -> set[str]:
+def privacy_categories(
+    document, *, allowed_source_urls: frozenset[str], diagnostics=None, role="other"
+) -> set[str]:
     categories = set()
 
     def at(*keys):
@@ -133,9 +135,42 @@ def privacy_categories(document, *, allowed_source_urls: frozenset[str]) -> set[
     ):
         categories.add("unapproved-source-url")
 
-    pending = [document]
+    def record(location, matcher, candidate):
+        if diagnostics is None:
+            return
+        relation = "other"
+        if candidate in allowed_source_urls:
+            relation = "exact-allowed"
+        elif any(candidate.startswith(url) for url in allowed_source_urls):
+            relation = "allowed-prefix"
+        key = (location, matcher, relation)
+        diagnostics[key] = min(diagnostics.get(key, 0) + 1, 65535)
+
+    def location_for(location, key):
+        if role == "native" and location == "native-other":
+            return {
+                "invocation": "native-request",
+                "buildDefinition": "native-build-config",
+                "runDetails": "native-run-details",
+            }.get(key, location)
+        if role == "native" and location == "native-run-details" and key == "source":
+            return "native-source-map"
+        if role == "native" and key == "request":
+            return "native-request"
+        if role == "native" and key in {"configSource", "resolvedDependencies", "vcs"}:
+            return "native-source"
+        if role == "result" and location == "result-other" and key == "tools":
+            return "result-tools"
+        return location
+
+    initial_location = {
+        "native": "native-other",
+        "metadata": "metadata",
+        "result": "result-other",
+    }.get(role, "other")
+    pending = [(document, initial_location)]
     while pending:
-        value = pending.pop()
+        value, location = pending.pop()
         if isinstance(value, dict):
             for key, item in value.items():
                 if (
@@ -144,9 +179,10 @@ def privacy_categories(document, *, allowed_source_urls: frozenset[str]) -> set[
                     and item
                 ):
                     categories.add("runtime-environment")
-                pending.extend((key, item))
+                child_location = location_for(location, key)
+                pending.extend(((key, child_location), (item, child_location)))
         elif isinstance(value, list):
-            pending.extend(value)
+            pending.extend((item, location) for item in value)
         elif isinstance(value, str):
             if HOME.search(value):
                 categories.add("user-home-path")
@@ -158,17 +194,22 @@ def privacy_categories(document, *, allowed_source_urls: frozenset[str]) -> set[
                         categories.add("credential-url")
                     if _private_host(host) and candidate not in allowed_source_urls:
                         categories.add("private-source-url")
+                        record(location, "url-private-host", candidate)
                 except ValueError:
                     categories.add("private-source-url")
+                    record(location, "url-malformed", candidate)
             if re.search(r"(?:^|\s)[^\s/@]+@[^\s/:]+:[^\s]+", value):
                 categories.add("private-source-url")
+                record(location, "scp", value)
     return categories
 
 
-def _audit(documents, output: Path, *, allowed_source_urls: frozenset[str]) -> dict:
-    categories, findings = set(), 0
+def _audit(
+    documents, output: Path, *, allowed_source_urls: frozenset[str], roles=()
+) -> dict:
+    categories, findings, diagnostics = set(), 0, {}
     with disclosure_scanner() as scan:
-        for raw, _ in documents:
+        for index, (raw, _) in enumerate(documents):
             # Hashing/bounds happened before parsing; scan original bytes unchanged.
             parsed = _parse(raw)
             rules = scan(raw)
@@ -176,12 +217,26 @@ def _audit(documents, output: Path, *, allowed_source_urls: frozenset[str]) -> d
             if rules:
                 categories.add("credential")
             categories.update(
-                privacy_categories(parsed, allowed_source_urls=allowed_source_urls)
+                privacy_categories(
+                    parsed,
+                    allowed_source_urls=allowed_source_urls,
+                    diagnostics=diagnostics,
+                    role=roles[index] if roles else "other",
+                )
             )
     summary = {
         "schema_version": 1,
         "blocked": bool(categories),
         "categories": sorted(categories),
+        "private_source_diagnostics": [
+            {
+                "location": location,
+                "matcher": matcher,
+                "relation": relation,
+                "count": count,
+            }
+            for (location, matcher, relation), count in sorted(diagnostics.items())
+        ],
         "documents": [descriptor for _, descriptor in documents],
         "detector": {"version": "8.30.1", "finding_count": findings},
     }
@@ -278,7 +333,12 @@ def audit_probe(directory: Path) -> dict:
     ):
         raise ValueError("probe source identity mismatch")
     # Only these exact already-validated fixture URLs may be network-private.
-    return _audit(documents, output, allowed_source_urls=frozenset({source, uri}))
+    return _audit(
+        documents,
+        output,
+        allowed_source_urls=frozenset({source, uri}),
+        roles=("native", "metadata", "result"),
+    )
 
 
 def main() -> int:

@@ -379,3 +379,144 @@ def test_host_classification_does_not_normalize_exact_fixture_allowance(
             tmp_path / "audit.json",
             allowed_source_urls=frozenset({original}),
         )
+
+
+@pytest.mark.parametrize(
+    "role,value,location,matcher,relation",
+    [
+        (
+            "native",
+            {
+                "buildDefinition": {
+                    "externalParameters": {
+                        "configSource": {"uri": "git://127.0.0.1:123/fixture#extra"}
+                    }
+                }
+            },
+            "native-source",
+            "url-private-host",
+            "allowed-prefix",
+        ),
+        (
+            "native",
+            {"runDetails": {"marker": "http://private.internal/raw-marker"}},
+            "native-run-details",
+            "url-private-host",
+            "other",
+        ),
+        (
+            "native",
+            {"buildDefinition": {"marker": "http://[broken/raw-marker"}},
+            "native-build-config",
+            "url-malformed",
+            "other",
+        ),
+        (
+            "metadata",
+            {"raw-marker": "person@host:raw-marker"},
+            "metadata",
+            "scp",
+            "other",
+        ),
+        (
+            "result",
+            {"tools": {"raw-marker": "golang:tag@sha256:raw-marker"}},
+            "result-tools",
+            "scp",
+            "other",
+        ),
+        (
+            "result",
+            {"raw-marker": "http://localhost/raw-marker"},
+            "result-other",
+            "url-private-host",
+            "other",
+        ),
+    ],
+)
+def test_private_diagnostics_preserve_policy_and_hide_values(
+    role, value, location, matcher, relation
+):
+    from scripts.releases.supply_chain import evidence
+
+    allowed = frozenset({"git://127.0.0.1:123/fixture"})
+    before = evidence.privacy_categories(value, allowed_source_urls=allowed)
+    diagnostics = {}
+    after = evidence.privacy_categories(
+        value, allowed_source_urls=allowed, diagnostics=diagnostics, role=role
+    )
+    assert after == before
+    assert "private-source-url" in after
+    assert diagnostics == {(location, matcher, relation): 1}
+    assert "raw-marker" not in repr(diagnostics)
+    assert "127.0.0.1" not in repr(diagnostics)
+
+
+def test_private_diagnostics_are_bounded_and_exact_allowance_stays_exact():
+    from scripts.releases.supply_chain import evidence
+
+    allowed = frozenset({"git://127.0.0.1:123/fixture"})
+    diagnostics = {}
+    assert (
+        evidence.privacy_categories(
+            {"value": next(iter(allowed))},
+            allowed_source_urls=allowed,
+            diagnostics=diagnostics,
+        )
+        == set()
+    )
+    assert diagnostics == {}
+    value = {"raw-marker": ["http://private.internal/raw-marker"] * 65540}
+    assert evidence.privacy_categories(
+        value, allowed_source_urls=allowed, diagnostics=diagnostics
+    ) == {"private-source-url"}
+    assert diagnostics == {("other", "url-private-host", "other"): 65535}
+
+
+def test_private_diagnostics_reach_safe_summary(tmp_path, scanner):
+    from scripts.releases.supply_chain import evidence
+
+    output = tmp_path / "audit.json"
+    with pytest.raises(evidence.EvidenceDisclosureBlocked) as blocked:
+        evidence.check_disclosure(
+            [document(tmp_path, {"raw-marker": "http://private.internal/raw-marker"})],
+            output,
+        )
+    summary = blocked.value.summary
+    assert summary["private_source_diagnostics"] == [
+        {
+            "location": "other",
+            "matcher": "url-private-host",
+            "relation": "other",
+            "count": 1,
+        }
+    ]
+    assert "raw-marker" not in json.dumps(summary)
+    assert json.loads(output.read_text()) == summary
+
+
+def test_native_nested_producer_diagnostic_buckets():
+    from scripts.releases.supply_chain import evidence
+
+    value = {
+        "buildDefinition": {
+            "internalParameters": {
+                "buildConfig": {"raw-marker": "http://private.internal/raw-marker"}
+            }
+        },
+        "runDetails": {
+            "metadata": {
+                "buildkit_metadata": {
+                    "source": {"infos": ["http://private.internal/raw-marker"]}
+                }
+            }
+        },
+    }
+    diagnostics = {}
+    assert evidence.privacy_categories(
+        value, allowed_source_urls=frozenset(), diagnostics=diagnostics, role="native"
+    ) == {"private-source-url"}
+    assert diagnostics == {
+        ("native-build-config", "url-private-host", "other"): 1,
+        ("native-source-map", "url-private-host", "other"): 1,
+    }
