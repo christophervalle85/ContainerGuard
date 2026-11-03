@@ -334,3 +334,29 @@ observations. This release has no Cosign signatures, release-image SBOMs or
 verified build provenance, and no independent second-developer installation is
 claimed. PostgreSQL, Redis and builder images remain outside the application
 runtime vulnerability gate.
+
+
+## Signed release qualification status
+
+As of 2026-11-02, no schema-2 signed release has been qualified. Local
+controlled-certificate and OCI-referrer fixture tests exercise cryptographic and
+transport behavior, but do not establish GitHub OIDC, GHCR, or transparency-log
+qualification. The future tagged Linux candidate, public anonymous verification,
+negative cases and installation exercise remain to be observed. The published
+v0.1.0 record above remains unsigned and unchanged.
+
+Local regression checks on November 2, 2026 passed: 1,370 backend tests,
+181 frontend tests, and 14 Chromium browser tests. Python lint and formatting,
+frontend lint and formatting, TypeScript checks, and the production frontend
+build also passed. The backend run included the opt-in controlled-certificate,
+release-template and secret-detector tests using dedicated test services.
+The frontend used Node 24.22.2. These results cover local implementation behavior;
+they do not replace the signed-release qualification described above.
+
+Final review resolved the release CLI bootstrap dependency and mismatches between
+BuildKit's native metadata and the input/disclosure checks. A minimal local
+Python FROM/RUN fixture used Buildx 0.38.0 and pinned BuildKit 0.34.0 to confirm
+the actual image material, public environment and cache destination/ID format.
+Its original native evidence passed the unchanged secret detector. The temporary
+builder was removed; this local-context fixture does not qualify a production
+Git-context candidate or a signed release.

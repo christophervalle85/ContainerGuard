@@ -1,5 +1,6 @@
 """Validate published identities and render a standalone, digest-only install."""
 
+import copy
 import json
 import re
 
@@ -158,3 +159,19 @@ def release_notes(manifest: dict) -> str:
         "",
     ]
     return "\n".join(lines)
+
+
+def render_verified_compose(manifest: dict, verification: dict) -> str:
+    from scripts.releases.supply_chain.verification import _binding, _Verified
+
+    if (
+        not isinstance(verification, _Verified)
+        or _binding(manifest) != verification._binding
+    ):
+        raise ValueError("Verification result does not bind this manifest")
+    common = copy.deepcopy(manifest)
+    common.pop("build_context")
+    common["schema_version"] = 1
+    for service in SERVICES:
+        common["images"][service].pop("evidence")
+    return render_compose(common)

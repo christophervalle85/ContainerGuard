@@ -94,9 +94,11 @@ def disclosure_scanner():
                         started + IMAGE_TIMEOUT, time.monotonic() + PROCESS_TIMEOUT
                     )
                     while process.poll() is None:
-                        if time.monotonic() > deadline or (
-                            report.exists() and report.stat().st_size > MAX_REPORT
-                        ):
+                        try:
+                            report_size = report.stat().st_size
+                        except FileNotFoundError:
+                            report_size = 0
+                        if time.monotonic() > deadline or report_size > MAX_REPORT:
                             raise ValueError("Disclosure scanner exceeded bounds")
                         time.sleep(0.02)
                     if (

@@ -28,6 +28,8 @@ p=args[args.index('--report-path')+1]
 if mode=='oversize': open(p,'w').write('x'*2000000);sys.exit(0)
 if mode=='invalid': open(p,'w').write('bad');sys.exit(0)
 if mode=='error': sys.exit(2)
+if mode=='absent': sys.exit(0)
+if mode=='delayed': time.sleep(0.1)
 findings=[{'RuleID':'generic-api-key','Secret':'REDACTED'}] if mode=='blocked' else []
 open(p,'w').write(json.dumps(findings))
 sys.exit(1 if findings else 0)
@@ -46,7 +48,7 @@ def test_clean_summary_omits_source_data(tmp_path, scanner, monkeypatch):
     assert "hello" not in json.dumps(summary)
 
 
-@pytest.mark.parametrize("mode", ["invalid", "oversize", "error", "timeout"])
+@pytest.mark.parametrize("mode", ["invalid", "oversize", "error", "timeout", "absent"])
 def test_scanner_failure_removes_stale_success(tmp_path, scanner, monkeypatch, mode):
     from scripts.releases import disclosure
 
@@ -58,6 +60,35 @@ def test_scanner_failure_removes_stale_success(tmp_path, scanner, monkeypatch, m
     with pytest.raises(ValueError):
         check_disclosure(archive, output)
     assert not output.exists()
+
+
+def test_report_replacement_during_scan_is_tolerated(tmp_path, scanner, monkeypatch):
+    from scripts.releases import disclosure
+
+    monkeypatch.setenv("FAKE_MODE", "delayed")
+    original_stat = Path.stat
+    original_exists = Path.exists
+    raced = False
+
+    def stat_with_replacement_race(path, *args, **kwargs):
+        nonlocal raced
+        if path.name == "report.json" and not raced:
+            raced = True
+            raise FileNotFoundError(path)
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", stat_with_replacement_race)
+    monkeypatch.setattr(
+        Path,
+        "exists",
+        lambda path: True if path.name == "report.json" else original_exists(path),
+    )
+    archive = image_archive(tmp_path / "api.tar")
+
+    summary = disclosure.check_disclosure(archive, tmp_path / "summary.json")
+
+    assert raced
+    assert summary["blocked"] is False
 
 
 def test_detection_blocks_and_retains_only_counts(tmp_path, scanner, monkeypatch):
@@ -78,6 +109,7 @@ def test_wrong_scanner_version_and_unavailable_fail(tmp_path, scanner, monkeypat
     with pytest.raises(ValueError):
         check_disclosure(archive, tmp_path / "summary.json")
     scanner.unlink()
+    monkeypatch.setenv("PATH", str(tmp_path))
     with pytest.raises(ValueError):
         check_disclosure(archive, tmp_path / "summary.json")
 
@@ -163,3 +195,34 @@ def test_exact_exceptions_do_not_suppress_generated_credentials(
     summary = json.loads(output.read_text())
     assert summary["rules"].get(kind, 0) >= 1
     assert token not in output.read_text()
+
+
+def test_secret_in_generated_evidence_blocks_schema2_handoff(tmp_path, monkeypatch):
+    from scripts.releases.supply_chain import manifest, provenance
+    from tests.test_supply_chain_manifest import sealed_case
+
+    executable = os.environ.get("RELEASE_GITLEAKS")
+    if not executable:
+        pytest.skip("Pinned Gitleaks integration requires RELEASE_GITLEAKS")
+    monkeypatch.setenv(
+        "PATH", str(Path(executable).parent) + os.pathsep + os.environ["PATH"]
+    )
+    context, images = sealed_case(tmp_path)
+    token = "ghp_" + secrets.token_hex(18)
+    path = tmp_path / "api.sbom.json"
+    document = json.loads(path.read_text())
+    document["metadata"]["component"]["properties"].append(
+        {"name": "accidentally-generated-token", "value": token}
+    )
+    path.write_text(json.dumps(document))
+    record = provenance.build_record(
+        image=images["api"],
+        context=context,
+        files={"sbom": path, "provenance": tmp_path / "api.provenance.json"},
+    )
+    (tmp_path / "api.build-record.json").write_text(json.dumps(record))
+    with pytest.raises(DisclosureBlocked) as caught:
+        manifest.write_handoff(images, tmp_path, context=context)
+    assert not (tmp_path / "handoff.json").exists()
+    assert token not in str(caught.value)
+    assert token not in (tmp_path / "evidence-disclosure.json").read_text()

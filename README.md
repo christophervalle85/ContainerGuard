@@ -37,9 +37,11 @@ end-to-end tour.
 is available as separate API, worker and dashboard images on GHCR. A fresh
 installation using the published linux/amd64 images passed anonymous pulls, a real
 scan, SBOM integrity checks, policy evaluation and persistence after recreation.
+A future signed release uses the schema-2 verification procedure in the release
+guide; no signed release has yet been qualified.
+
 Follow the [release guide](docs/releases.md) to run it without building source, or
-use the source setup below for development. This release is not signed; release
-SBOMs and provenance verification are planned separately.
+use the source setup below for development. This release is not signed and has no release-image SBOM or verified provenance.
 
 ## Run it locally
 
@@ -734,7 +736,7 @@ python3 -m scripts.scan_security --kind image --input containerguard-api:securit
 ```
 
 Repeat the image commands for `worker`; for `frontend`, use `Dockerfile.frontend`
-with build context `frontend`. CI contains the complete matrix. The installer
+with build context `.`. Its Dockerfile-specific allowlist isolates frontend inputs. CI contains the complete matrix. The installer
 builds Trivy from checksum-pinned source with reviewed Go patches; its first
 build needs internet access and can take several minutes. The API and worker use
 lean Alpine Python runtimes, with build tools and pip excluded from the runtime.

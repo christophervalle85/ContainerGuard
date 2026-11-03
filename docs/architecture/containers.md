@@ -171,8 +171,8 @@ live scan or establish automatic recovery. See [SBOMs](sboms.md) and
 The frontend image has a locked Node 24 build stage and a pinned unprivileged
 Nginx runtime (UID/GID 101). It serves compiled static assets on container port
 8080, published only at localhost:8080 by default. Node and frontend development
-dependencies stay out of the runtime. The frontend uses its own build context;
-the Python context remains restricted to runtime inputs.
+dependencies stay out of the runtime. The frontend uses the repository root context with `Dockerfile.frontend.dockerignore`
+restricting it to frontend inputs. The Python root allowlist stays unchanged.
 
 Nginx forwards /api/ paths to api:8000 with Docker DNS re-resolution, preserving
 status codes and bodies. Missing assets return 404; UI deep links receive the SPA

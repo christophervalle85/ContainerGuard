@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts.releases.supply_chain import evidence
 from tests import test_release_disclosure
 
 scanner = test_release_disclosure.scanner
@@ -793,3 +794,326 @@ def test_nested_event_decoys_are_not_attributed_to_repository_ssh_field(payload)
     ) == {"private-source-url"}
     assert diagnostics == {("native-github-event", "scp", "other"): 1}
     assert shapes == {("native-github-event", "value", False, False, False): 1}
+
+
+# Task 3 bounded release document interfaces.
+
+
+@pytest.mark.parametrize(
+    "kind,limit",
+    [
+        ("sbom", 16 * 1024**2),
+        ("provenance", 4 * 1024**2),
+        ("build-record", 4 * 1024**2),
+    ],
+)
+def test_limits_before_json_parsing(tmp_path, monkeypatch, kind, limit):
+    path = tmp_path / "evidence.json"
+    with path.open("wb") as stream:
+        stream.truncate(limit + 1)
+    monkeypatch.setattr(
+        json, "loads", lambda *a, **k: pytest.fail("parsed oversized input")
+    )
+    with pytest.raises(ValueError, match="size limit"):
+        evidence.read_document(path, kind=kind)
+
+
+def test_duplicate_keys_and_truncation_rejected(tmp_path):
+    path = tmp_path / "evidence.json"
+    for raw in (b'{"a":1,"a":2}', b'{"a":'):
+        path.write_bytes(raw)
+        with pytest.raises(ValueError):
+            evidence.read_document(path, kind="provenance")
+
+
+def test_symlink_rejected(tmp_path):
+    path = tmp_path / "real.json"
+    path.write_text("{}")
+    link = tmp_path / "link.json"
+    link.symlink_to(path)
+    with pytest.raises(ValueError, match="unsafe"):
+        evidence.read_document(link, kind="sbom")
+
+
+def test_descriptor_hashes_raw_bytes_and_uses_basename(tmp_path):
+    import hashlib
+
+    path = tmp_path / "native.json"
+    path.write_bytes(b'{ "native": true }\n')
+    assert evidence.describe_file(path, kind="provenance") == {
+        "path": "native.json",
+        "kind": "provenance",
+        "size_bytes": 19,
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+    }
+
+
+def test_aggregate_evidence_limit(tmp_path, monkeypatch):
+    monkeypatch.setattr(evidence, "COMBINED_LIMIT", 12)
+    paths = [tmp_path / f"{i}.json" for i in range(2)]
+    for path in paths:
+        path.write_text('{"a":1}')
+    with pytest.raises(ValueError, match="size limit"):
+        evidence._load_documents(paths)
+
+
+def test_nonfinite_float_rejected(tmp_path):
+    path = tmp_path / "native.json"
+    path.write_text('{"overflow":1e999}')
+    with pytest.raises(ValueError):
+        evidence.read_document(path, kind="provenance")
+
+
+def test_bounded_command_kills_oversize_output(tmp_path):
+    import sys
+
+    from scripts.releases.commands import command_file
+
+    output = tmp_path / "output.json"
+    with pytest.raises(ValueError, match="bounds"):
+        command_file(
+            [
+                sys.executable,
+                "-c",
+                (
+                    'import sys,time;sys.stdout.write("x"*10000);'
+                    "sys.stdout.flush();time.sleep(30)"
+                ),
+            ],
+            output,
+            limit=1024,
+            timeout=2,
+        )
+    assert not output.exists()
+
+
+def test_release_sbom_disclosure_uses_explicit_16mib_kind(tmp_path, scanner):
+    path = tmp_path / "api.sbom.json"
+    path.write_text(json.dumps({"padding": "x" * (4 * 1024**2)}))
+    assert (
+        evidence.check_disclosure([path], tmp_path / "audit.json", kinds=["sbom"])[
+            "blocked"
+        ]
+        is False
+    )
+    with pytest.raises(ValueError, match="size limit"):
+        evidence.check_disclosure([path], tmp_path / "audit.json")
+
+
+def test_over_limit_base64_rejected_before_decode(monkeypatch):
+    import base64
+
+    monkeypatch.setattr(evidence, "KIND_LIMITS", {"provenance": 3})
+    monkeypatch.setattr(
+        base64, "b64decode", lambda *a, **kw: pytest.fail("decoded oversized input")
+    )
+    with pytest.raises(ValueError, match="size limit"):
+        evidence.decode_document("eHh4eA==", kind="provenance")
+
+
+def test_base64_duplicate_and_truncated_json_rejected():
+    import base64
+
+    for raw in (b'{"a":1,"a":2}', b'{"a":'):
+        with pytest.raises(ValueError):
+            evidence.decode_document(base64.b64encode(raw).decode(), kind="provenance")
+
+
+def test_actual_256mib_aggregate_bound(tmp_path):
+    paths = [tmp_path / f"{i}.json" for i in range(17)]
+    for path in paths:
+        with path.open("wb") as stream:
+            stream.truncate(16 * 1024**2)
+    with pytest.raises(ValueError, match="size limit"):
+        evidence._load_documents(paths, kinds=["sbom"] * 17)
+
+
+def test_synthetic_native_public_exec_env_is_bounded_to_verified_service(tmp_path):
+    from tests.test_supply_chain_provenance import case
+
+    context, native, _, _ = case(tmp_path)
+    from scripts.releases.supply_chain.public_inputs import PYTHON, UV
+
+    for name, tag, digest in (PYTHON, UV):
+        native["buildDefinition"]["resolvedDependencies"].append(
+            {
+                "uri": (
+                    f"pkg:docker/{name}@{tag}?digest=sha256:{digest}"
+                    "&platform=linux%2Famd64"
+                ),
+                "digest": {"sha256": digest},
+            }
+        )
+    native["buildDefinition"]["internalParameters"]["buildConfig"] = {
+        "llbDefinition": [
+            {
+                "op": {
+                    "Op": {
+                        "exec": {
+                            "meta": {
+                                "env": [
+                                    "PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                                    "PYTHON_VERSION=3.14.7",
+                                    "PYTHON_SHA256=3b48dac8fb59f62eaa67ac83c1eb12bda1b7a08406dd286e252c11a66be27f81",
+                                ]
+                            },
+                            "mounts": [
+                                {
+                                    "dest": "/root/.cache/uv",
+                                    "input": -1,
+                                    "output": -1,
+                                    "mountType": 3,
+                                    "cacheOpt": {"ID": "//root/.cache/uv"},
+                                }
+                            ],
+                        }
+                    }
+                }
+            }
+        ]
+    }
+    allowed = frozenset(
+        {
+            "https://github.com/christophervalle85/ContainerGuard",
+            "https://github.com/christophervalle85/ContainerGuard#" + context["commit"],
+        }
+    )
+    assert not evidence.privacy_categories(
+        native,
+        allowed_source_urls=allowed,
+        role="native",
+        service="api",
+        commit=context["commit"],
+    )
+    native["buildDefinition"]["internalParameters"]["buildConfig"]["llbDefinition"][0][
+        "op"
+    ]["Op"]["exec"]["meta"]["env"].append("SECRET=private")
+    assert "runtime-environment" in evidence.privacy_categories(
+        native,
+        allowed_source_urls=allowed,
+        role="native",
+        service="api",
+        commit=context["commit"],
+    )
+
+
+def test_synthetic_public_metadata_rejects_misplaced_and_conflicting_values(tmp_path):
+    from copy import deepcopy
+
+    from scripts.releases.supply_chain.public_inputs import PYTHON, UV
+    from tests.test_supply_chain_provenance import case
+
+    context, native, _, _ = case(tmp_path)
+    for name, tag, digest in (PYTHON, UV):
+        native["buildDefinition"]["resolvedDependencies"].append(
+            {
+                "uri": (
+                    f"pkg:docker/{name}@{tag}?digest=sha256:{digest}"
+                    "&platform=linux%2Famd64"
+                ),
+                "digest": {"sha256": digest},
+            }
+        )
+    exec_op = {
+        "meta": {
+            "env": [
+                "PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+            ]
+        },
+        "mounts": [
+            {
+                "dest": "/root/.cache/uv",
+                "input": -1,
+                "output": -1,
+                "mountType": 3,
+                "cacheOpt": {"ID": "//root/.cache/uv"},
+            }
+        ],
+    }
+    native["buildDefinition"]["internalParameters"]["buildConfig"] = {
+        "llbDefinition": [{"op": {"Op": {"exec": exec_op}}}]
+    }
+    allowed = frozenset(
+        {
+            "https://github.com/christophervalle85/ContainerGuard",
+            "https://github.com/christophervalle85/ContainerGuard#" + context["commit"],
+        }
+    )
+
+    def audit(doc):
+        return evidence.privacy_categories(
+            doc,
+            allowed_source_urls=allowed,
+            role="native",
+            service="api",
+            commit=context["commit"],
+        )
+
+    assert not audit(native)
+    changed = deepcopy(native)
+    changed_exec = changed["buildDefinition"]["internalParameters"]["buildConfig"][
+        "llbDefinition"
+    ][0]["op"]["Op"]["exec"]
+    changed_exec["meta"]["env"].append(
+        "PATH=/app/.venv/bin:/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    )
+    assert "runtime-environment" in audit(changed)
+    changed = deepcopy(native)
+    changed["buildDefinition"]["internalParameters"]["buildConfig"]["llbDefinition"][0][
+        "op"
+    ]["Op"]["exec"]["mounts"][0]["cacheOpt"]["ID"] = "other"
+    assert "user-home-path" in audit(changed)
+    changed = deepcopy(native)
+    changed["buildDefinition"]["internalParameters"]["description"] = "/root/.cache/uv"
+    assert "user-home-path" in audit(changed)
+    changed = deepcopy(native)
+    changed["buildDefinition"]["internalParameters"]["env"] = [
+        "PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    ]
+    assert "runtime-environment" in audit(changed)
+
+
+def test_real_detector_scans_native_even_with_reviewed_metadata(tmp_path, monkeypatch):
+    import secrets
+
+    from scripts.releases.disclosure import DisclosureBlocked
+    from scripts.releases.supply_chain.public_inputs import PYTHON, UV
+    from tests.test_supply_chain_provenance import case
+
+    executable = os.environ.get("RELEASE_GITLEAKS")
+    if not executable:
+        pytest.skip("Pinned real detector requires RELEASE_GITLEAKS")
+    monkeypatch.setenv(
+        "PATH", str(Path(executable).parent) + os.pathsep + os.environ["PATH"]
+    )
+    context, native, _, _ = case(tmp_path)
+    for name, tag, digest in (PYTHON, UV):
+        native["buildDefinition"]["resolvedDependencies"].append(
+            {
+                "uri": f"pkg:docker/{name}@{tag}?digest=sha256:{digest}"
+                + "&platform=linux%2Famd64",
+                "digest": {"sha256": digest},
+            }
+        )
+    native["buildDefinition"]["internalParameters"]["buildConfig"] = {
+        "llbDefinition": [
+            {"op": {"Op": {"exec": {"meta": {"env": ["PYTHON_VERSION=3.14.7"]}}}}}
+        ]
+    }
+    path = document(tmp_path, native)
+    source = "https://github.com/christophervalle85/ContainerGuard"
+    options = {
+        "allowed_source_urls": frozenset({source, source + "#" + context["commit"]}),
+        "kinds": ["provenance"],
+        "contexts": [{"service": "api", "commit": context["commit"]}],
+    }
+    assert not evidence.check_disclosure([path], tmp_path / "audit.json", **options)[
+        "blocked"
+    ]
+    native["buildDefinition"]["internalParameters"]["description"] = (
+        "ghp_" + secrets.token_hex(18)
+    )
+    path.write_text(json.dumps(native))
+    with pytest.raises(DisclosureBlocked) as blocked:
+        evidence.check_disclosure([path], tmp_path / "audit.json", **options)
+    assert "credential" in blocked.value.summary["categories"]

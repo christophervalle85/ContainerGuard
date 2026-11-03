@@ -161,10 +161,11 @@ class Registry:
             and repository in self.tokens
         ):
             error = read_json(raw)
-            errors = error.get("errors")
+            errors = error.get("errors") if isinstance(error, dict) else None
             if (
                 isinstance(errors, list)
                 and len(errors) == 1
+                and isinstance(errors[0], dict)
                 and errors[0].get("code") in ("MANIFEST_UNKNOWN", "NAME_UNKNOWN")
             ):
                 return None

@@ -1,6 +1,6 @@
 # Release supply-chain security
 
-Status: approved; native SLSA v1 capture correction approved. The published v0.1.0 release has no signatures, release-image
+Status: local implementation and review complete; live tagged-release qualification pending. The published v0.1.0 release has no signatures, release-image
 SBOMs or verified build provenance. This design applies to a future release;
 it does not change v0.1.0 or claim that the proposed checks already pass.
 
@@ -129,6 +129,16 @@ never pass secrets through build arguments. Reject evidence that fails disclosur
 rather than stripping its fields. Never include tokens, runtime configuration, arbitrary
 environment dumps or private source URLs. Do not silently strip evidence fields
 after signing or add detector exceptions merely to make publication pass.
+
+Native material acceptance uses exact per-service URI and root digest pairs tied to
+the reviewed Dockerfile bytes and source identity; unknown or conflicting materials
+fail closed. Public environment values are accepted only in the pinned producer's
+native execution metadata, bound to the corresponding reviewed base material.
+Reviewed cache paths are accepted only as matching native cache-mount destination
+and ID pairs. These allowances do not alter the full-byte detector scan. The
+local pinned BuildKit fixture establishes the observed Python environment and cache
+shape, not qualification of the full production candidate; new input pins require
+review and a corresponding policy update.
 
 ## Workflow permissions and transfer
 

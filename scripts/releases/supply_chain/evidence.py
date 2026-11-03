@@ -1,9 +1,12 @@
 """Bounded exact-byte disclosure audit shared with future release evidence work."""
 
 import argparse
+import base64
+import binascii
 import hashlib
 import ipaddress
 import json
+import math
 import os
 import re
 import stat
@@ -18,6 +21,12 @@ from scripts.releases.disclosure import DisclosureBlocked, disclosure_scanner
 DOCUMENT_LIMIT = 4 * 1024 * 1024
 COMBINED_LIMIT = 256 * 1024 * 1024
 MAX_DOCUMENTS = COMBINED_LIMIT // DOCUMENT_LIMIT
+KIND_LIMITS = {
+    "sbom": 16 * 1024**2,
+    "provenance": DOCUMENT_LIMIT,
+    "build-record": DOCUMENT_LIMIT,
+    "verification": 24 * 1024**2,
+}
 URL = re.compile(r"(?:https?|git|ssh)://[^\s\"'<>`]+", re.IGNORECASE)
 HOME = re.compile(
     r"(?<![A-Za-z0-9])(?:(?:/Users/|/home/|[A-Za-z]:\\Users\\)[^/\\\s]+|/root(?:/|$))",
@@ -45,11 +54,18 @@ def _prepare_output(output: Path, paths: list[Path]) -> None:
     output.unlink(missing_ok=True)
 
 
-def _load_documents(paths: list[Path]) -> list[tuple[bytes, dict]]:
+def _load_documents(
+    paths: list[Path], *, kinds: list[str] | None = None
+) -> list[tuple[bytes, dict]]:
     if not paths or len(paths) > MAX_DOCUMENTS:
         raise ValueError("evidence count limit")
     documents, seen, total = [], set(), 0
-    for path in paths:
+    if kinds is not None and len(kinds) != len(paths):
+        raise ValueError("evidence kind mismatch")
+    for index, path in enumerate(paths):
+        limit = (
+            KIND_LIMITS.get(kinds[index], DOCUMENT_LIMIT) if kinds else DOCUMENT_LIMIT
+        )
         try:
             descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         except OSError:
@@ -59,14 +75,14 @@ def _load_documents(paths: list[Path]) -> list[tuple[bytes, dict]]:
             identity = (info.st_dev, info.st_ino)
             if not stat.S_ISREG(info.st_mode) or identity in seen:
                 raise ValueError("unsafe evidence input")
-            if info.st_size > DOCUMENT_LIMIT or total + info.st_size > COMBINED_LIMIT:
+            if info.st_size > limit or total + info.st_size > COMBINED_LIMIT:
                 raise ValueError("evidence size limit")
             seen.add(identity)
             raw, digest = bytearray(), hashlib.sha256()
-            while chunk := stream.read(min(65536, DOCUMENT_LIMIT + 1 - len(raw))):
+            while chunk := stream.read(min(65536, limit + 1 - len(raw))):
                 raw.extend(chunk)
                 digest.update(chunk)
-                if len(raw) > DOCUMENT_LIMIT or total + len(raw) > COMBINED_LIMIT:
+                if len(raw) > limit or total + len(raw) > COMBINED_LIMIT:
                     raise ValueError("evidence size limit")
             total += len(raw)
             documents.append(
@@ -75,18 +91,57 @@ def _load_documents(paths: list[Path]) -> list[tuple[bytes, dict]]:
     return documents
 
 
-def _parse(raw: bytes):
+def _parse(raw: bytes, *, limit: int = DOCUMENT_LIMIT):
     def invalid_constant(value):
         raise ValueError("invalid JSON constant")
 
-    if len(raw) > DOCUMENT_LIMIT:
+    if len(raw) > limit:
         raise ValueError("evidence size limit")
+
+    def finite_float(value):
+        result = float(value)
+        if not math.isfinite(result):
+            raise ValueError("invalid JSON number")
+        return result
+
     document = json.loads(
-        raw, object_pairs_hook=unique, parse_constant=invalid_constant
+        raw,
+        object_pairs_hook=unique,
+        parse_constant=invalid_constant,
+        parse_float=finite_float,
     )
     if not isinstance(document, dict):
         raise ValueError("evidence JSON object required")
     return document
+
+
+def read_document(path: Path, *, kind: str) -> dict:
+    """Read a bounded regular-file snapshot before decoding JSON."""
+    raw, _ = _load_documents([path], kinds=[kind])[0]
+    try:
+        return _parse(raw, limit=KIND_LIMITS.get(kind, DOCUMENT_LIMIT))
+    except (ValueError, UnicodeError, RecursionError):
+        raise ValueError("invalid evidence JSON") from None
+
+
+def decode_document(encoded: str, *, kind: str) -> dict:
+    """Reject over-limit base64 before allocating decoded transport bytes."""
+    limit = KIND_LIMITS.get(kind, DOCUMENT_LIMIT)
+    if not isinstance(encoded, str) or len(encoded) > 4 * ((limit + 2) // 3):
+        raise ValueError("evidence size limit")
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+        return _parse(raw, limit=limit)
+    except (ValueError, binascii.Error, UnicodeError, RecursionError):
+        raise ValueError("invalid encoded evidence") from None
+
+
+def describe_file(path: Path, *, kind: str) -> dict:
+    """Hash exact file bytes, exposing only the public basename."""
+    _, descriptor = _load_documents([path], kinds=[kind])[0]
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,199}", path.name):
+        raise ValueError("unsafe evidence basename")
+    return {"path": path.name, "kind": kind, **descriptor}
 
 
 def _private_host(host: str) -> bool:
@@ -111,6 +166,8 @@ def privacy_categories(
     diagnostics=None,
     scp_shapes=None,
     role="other",
+    service=None,
+    commit=None,
 ) -> set[str]:
     categories = set()
 
@@ -122,6 +179,24 @@ def privacy_categories(
             value = value.get(key)
         return value
 
+    from scripts.releases.supply_chain import public_inputs
+
+    reviewed = (
+        role == "native"
+        and service is not None
+        and public_inputs.bound(document, service, commit)
+    )
+    if reviewed:
+        try:
+            public_inputs.materials(document, service, commit)
+        except (ValueError, KeyError, TypeError):
+            reviewed = False
+            categories.add("unapproved-source-url")
+
+    public_env, public_cache = (
+        public_inputs.metadata(document, service) if reviewed else (set(), set())
+    )
+
     # Source identities need trusted exact approval; public DNS cannot prove ACLs.
     # Documentation, builder, buildType and tool download URLs are not source fields.
     locators = [
@@ -130,9 +205,10 @@ def privacy_categories(
     ]
     dependencies = at("buildDefinition", "resolvedDependencies")
     if isinstance(dependencies, list):
-        locators.extend(
-            item.get("uri") for item in dependencies if isinstance(item, dict)
-        )
+        if not reviewed:
+            locators.extend(
+                item.get("uri") for item in dependencies if isinstance(item, dict)
+            )
     if any(
         value is not None
         and (not isinstance(value, str) or value not in allowed_source_urls)
@@ -216,17 +292,38 @@ def privacy_categories(
             "repository": {"ssh_url": "ssh-url"},
         }.get(state, {}).get(key, "other")
 
-    pending = [(document, initial_location, "value", None)]
+    pending = [(document, initial_location, "value", None, ())]
     while pending:
-        value, location, node_kind, event_state = pending.pop()
+        value, location, node_kind, event_state, path = pending.pop()
+        shape = tuple("[]" if isinstance(part, int) else part for part in path)
         if isinstance(value, dict):
             for key, item in value.items():
-                if (
-                    key.casefold() in ENVIRONMENT_KEYS
-                    and isinstance(item, (dict, list, str))
-                    and item
+                if key.casefold() in ENVIRONMENT_KEYS and item not in (
+                    None,
+                    "",
+                    [],
+                    {},
                 ):
-                    categories.add("runtime-environment")
+                    env_path = (
+                        "buildDefinition",
+                        "internalParameters",
+                        "buildConfig",
+                        "llbDefinition",
+                        "[]",
+                        "op",
+                        "Op",
+                        "exec",
+                        "meta",
+                        "env",
+                    )
+                    if not (
+                        reviewed
+                        and shape + (key,) == env_path
+                        and isinstance(item, list)
+                        and all(isinstance(v, str) and v in public_env for v in item)
+                        and len(item) == len({v.partition("=")[0] for v in item})
+                    ):
+                        categories.add("runtime-environment")
                 child_location = location_for(location, key)
                 child_state = None
                 if event_state is not None:
@@ -244,16 +341,59 @@ def privacy_categories(
                     child_state = "root"
                 pending.extend(
                     (
-                        (key, child_location, "key", child_state),
-                        (item, child_location, "value", child_state),
+                        (key, child_location, "key", child_state, path + (key,)),
+                        (item, child_location, "value", child_state, path + (key,)),
                     )
                 )
         elif isinstance(value, list):
             if event_state is not None:
                 location, event_state = "native-github-event", "other"
-            pending.extend((item, location, "value", event_state) for item in value)
+            pending.extend(
+                (item, location, "value", event_state, path + (index,))
+                for index, item in enumerate(value)
+            )
         elif isinstance(value, str):
-            if HOME.search(value):
+            mount = (
+                "buildDefinition",
+                "internalParameters",
+                "buildConfig",
+                "llbDefinition",
+                "[]",
+                "op",
+                "Op",
+                "exec",
+                "mounts",
+                "[]",
+            )
+            approved_cache = False
+            if (
+                reviewed
+                and node_kind == "value"
+                and shape
+                in (
+                    mount + ("dest",),
+                    mount + ("cacheOpt", "ID"),
+                )
+            ):
+                try:
+                    entry = document
+                    mount_path = path[:-1] if shape[-1] == "dest" else path[:-2]
+                    for part in mount_path:
+                        entry = entry[part]
+                    destination = entry.get("dest")
+                    cache_id = entry.get("cacheOpt", {}).get("ID")
+                    approved_cache = (
+                        destination in public_cache
+                        and entry.get("mountType") == 3
+                        and entry.get("input") == -1
+                        and entry.get("output") == -1
+                        and entry.get("cacheOpt") == {"ID": cache_id}
+                        and cache_id == "/" + destination
+                        and value == (destination if shape[-1] == "dest" else cache_id)
+                    )
+                except (KeyError, IndexError, TypeError, AttributeError):
+                    pass
+            if HOME.search(value) and not approved_cache:
                 categories.add("user-home-path")
             for candidate in URL.findall(value):
                 try:
@@ -286,13 +426,22 @@ def privacy_categories(
 
 
 def _audit(
-    documents, output: Path, *, allowed_source_urls: frozenset[str], roles=()
+    documents,
+    output: Path,
+    *,
+    allowed_source_urls: frozenset[str],
+    roles=(),
+    contexts=(),
 ) -> dict:
+    if (roles and len(roles) != len(documents)) or (
+        contexts and len(contexts) != len(documents)
+    ):
+        raise ValueError("audit context mismatch")
     categories, findings, diagnostics, scp_shapes = set(), 0, {}, {}
     with disclosure_scanner() as scan:
         for index, (raw, _) in enumerate(documents):
             # Hashing/bounds happened before parsing; scan original bytes unchanged.
-            parsed = _parse(raw)
+            parsed = _parse(raw, limit=max(DOCUMENT_LIMIT, len(raw)))
             rules = scan(raw)
             findings += sum(rules.values())
             if rules:
@@ -304,6 +453,7 @@ def _audit(
                     diagnostics=diagnostics,
                     scp_shapes=scp_shapes,
                     role=roles[index] if roles else "other",
+                    **(contexts[index] if contexts else {}),
                 )
             )
     summary = {
@@ -351,13 +501,21 @@ def check_disclosure(
     output: Path,
     *,
     allowed_source_urls: frozenset[str] = frozenset(),
+    kinds: list[str] | None = None,
+    contexts=(),
 ) -> dict:
     """Audit bounded original JSON bytes; allowance is trusted caller context only."""
     _prepare_output(output, paths)
     if not isinstance(allowed_source_urls, frozenset):
         raise ValueError("immutable trusted source allowance required")
     return _audit(
-        _load_documents(paths), output, allowed_source_urls=allowed_source_urls
+        _load_documents(paths, kinds=kinds),
+        output,
+        allowed_source_urls=allowed_source_urls,
+        roles=tuple("native" if kind == "provenance" else "other" for kind in kinds)
+        if contexts
+        else (),
+        contexts=contexts,
     )
 
 
