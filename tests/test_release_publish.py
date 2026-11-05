@@ -12,6 +12,12 @@ from tests.test_release_disclosure import scanner  # noqa: F401
 from tests.test_supply_chain_manifest import sealed_case
 
 
+@pytest.fixture(autouse=True)
+def local_release_environment(monkeypatch):
+    """Keep local fixtures independent of the surrounding GitHub Actions run."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+
+
 @pytest.fixture
 def candidate_dir(tmp_path, request):
     request.getfixturevalue("scanner")

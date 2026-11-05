@@ -11,6 +11,12 @@ from tests.test_release_artifacts import COMMIT, prepare_evidence
 from tests.test_supply_chain_manifest import canonical_archive, native_files
 
 
+@pytest.fixture(autouse=True)
+def local_release_environment(monkeypatch):
+    """Keep local fixtures independent of the surrounding GitHub Actions run."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+
+
 def context():
     return {
         "version": "v1.0.0",
