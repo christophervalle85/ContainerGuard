@@ -204,7 +204,7 @@ def test_sbom_image_identity_rejected_before_record_creation(tmp_path, mutation)
         provenance.build_record(image=image, context=ctx, files=files)
 
 
-def test_real_other_image_sbom_cannot_be_bound_to_api(tmp_path):
+def test_real_other_image_sbom_cannot_be_bound_to_api(tmp_path, monkeypatch):
     from pathlib import Path
 
     ctx, _, image, files = case(tmp_path)
@@ -213,6 +213,11 @@ def test_real_other_image_sbom_cannot_be_bound_to_api(tmp_path):
             Path(__file__).parent / "fixtures/releases/trivy-0.75.0-cg.1.cdx17.json"
         ).read_bytes()
     )
+    # Retain the original raw fixture and explicitly select its historical policy.
+    monkeypatch.setattr(provenance.sbom, "SCANNER_VERSION", "0.75.0+cg.1")
+    historical = evidence.read_document(files["sbom"], kind="sbom")
+    provenance.sbom.validate(historical)
+    assert provenance.sbom.image_identity(historical) != image["image_id"]
     with pytest.raises(ValueError, match="record"):
         provenance.build_record(image=image, context=ctx, files=files)
 

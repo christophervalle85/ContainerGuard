@@ -14,7 +14,7 @@ from scripts.releases.supply_chain.evidence import KIND_LIMITS, read_document
 
 ROOT = Path(__file__).resolve().parents[3]
 SCHEMAS = ROOT / "security/schemas/cyclonedx-1.7"
-SCANNER_VERSION = "0.75.0+cg.1"
+SCANNER_VERSION = "0.75.0+cg.2"
 
 
 def _validator():

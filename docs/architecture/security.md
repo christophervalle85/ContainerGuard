@@ -221,7 +221,7 @@ verified against the pinned releases when preparing the implementation plan.
 The Debian runtime baseline failed the unchanged HIGH/CRITICAL threshold. A
 Debian 13 trial still had 52 HIGH findings. The selected runtime uses pinned Alpine
 Python, removes unused pip and its vendored packages, updates the frontend's
-TIFF/zlib packages, and rebuilds Trivy 0.75.0 with Go 1.27.2/x/net 0.60.0. The
-patched scanner identifies itself as `0.75.0+cg.1`. No vulnerability exceptions
+TIFF/zlib packages, and rebuilds Trivy 0.75.0 with Go 1.27.3, x/net 0.60.0 and go-jose/v4 4.1.6. The
+patched scanner identifies itself as `0.75.0+cg.2`. No vulnerability exceptions
 were added. See [container maintenance](containers.md#resource-bounds-and-scanner-maintenance)
 for the downstream build's upkeep and the actual sizing observations.

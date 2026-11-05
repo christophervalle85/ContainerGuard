@@ -10,7 +10,7 @@ DOCKERFILES = dict(
         ("api", "worker", "frontend"),
         (
             "e981f24ea307af6d9363165501c5ac39c9a83bca5830d70041f6405f8e2e48e7",
-            "fd676ba7c57792fc86eafd57e9a131a1cbf5d57cbbf7a3729caec13eaabc8e40",
+            "80486fb2e1fc0fec745bf160fd64b7a84a40caa6abf419c44b7951120bd26597",
             "ce02ad243705d2e66a3d9b05972fa91f07b2dc20c8c4968c01b41400569bf945",
         ),
         strict=True,
@@ -28,8 +28,8 @@ UV = (
 )
 GO = (
     "golang",
-    "1.27.2-alpine",
-    "f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d",
+    "1.27.3-alpine",
+    "d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb",
 )
 NODE = (
     "node",
@@ -59,7 +59,7 @@ PY_ENV = {
 }
 GO_ENV = {
     "PATH=/go/bin:/usr/local/go/bin:" + BASE_PATH,
-    "GOLANG_VERSION=1.27.2",
+    "GOLANG_VERSION=1.27.3",
     "GOTOOLCHAIN=local",
     "GOPATH=/go",
     "TARGETARCH=amd64",

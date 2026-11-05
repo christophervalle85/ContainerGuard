@@ -13,6 +13,7 @@ from tests.test_security_gate import ROOT, report
     [
         ("clean", 0),
         ("patched", 0),
+        ("patched_current", 0),
         ("wrong_version", 2),
         ("blocked", 1),
         ("failed", 2),
@@ -41,7 +42,9 @@ def test_runner_never_passes_unusable_scan(tmp_path, mode, expected):
             }
         )
     version = (
-        "0.75.0+cg.1"
+        "0.75.0+cg.2"
+        if mode == "patched_current"
+        else "0.75.0+cg.1"
         if mode == "patched"
         else ("0.74.0" if mode == "wrong_version" else "0.75.0")
     )

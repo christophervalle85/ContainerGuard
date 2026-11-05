@@ -271,7 +271,7 @@ def prepare_evidence(directory, images):
             now=datetime.now(UTC),
         )
         (output / "summary.json").write_text(json.dumps(summary))
-        (output / "scanner.json").write_text(json.dumps({"Version": "0.75.0+cg.1"}))
+        (output / "scanner.json").write_text(json.dumps({"Version": "0.75.0+cg.2"}))
         (directory / (service + "-disclosure.json")).write_text(
             json.dumps(
                 {

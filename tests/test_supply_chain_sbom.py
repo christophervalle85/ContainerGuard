@@ -26,7 +26,7 @@ def document():
                         "type": "application",
                         "group": "aquasecurity",
                         "name": "trivy",
-                        "version": "0.75.0+cg.1",
+                        "version": "0.75.0+cg.2",
                     }
                 ]
             },
@@ -86,12 +86,13 @@ def test_unknown_schema_reference_never_uses_network(tmp_path, monkeypatch):
         sbom.validate(document())
 
 
-def test_real_patched_scanner_output_validates():
+def test_historical_patched_scanner_output_validates(monkeypatch):
     from pathlib import Path
 
     from scripts.releases.supply_chain import evidence
 
     path = Path(__file__).parent / "fixtures/releases/trivy-0.75.0-cg.1.cdx17.json"
+    monkeypatch.setattr(sbom, "SCANNER_VERSION", "0.75.0+cg.1")
     assert (
         len(sbom.validate(evidence.read_document(path, kind="sbom"))["components"])
         == 71
@@ -158,3 +159,14 @@ def test_release_cli_help_works_without_site_packages(arguments):
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_current_release_rejects_historical_scanner_output():
+    from pathlib import Path
+
+    from scripts.releases.supply_chain import evidence
+
+    assert sbom.SCANNER_VERSION == "0.75.0+cg.2"
+    path = Path(__file__).parent / "fixtures/releases/trivy-0.75.0-cg.1.cdx17.json"
+    with pytest.raises(ValueError, match="SBOM"):
+        sbom.validate(evidence.read_document(path, kind="sbom"))

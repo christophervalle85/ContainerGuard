@@ -86,7 +86,7 @@ def verify_evidence(directory: Path, images: dict) -> dict:
         if (
             summary != saved
             or summary["blocked"] is not False
-            or scanner.get("Version") not in ("0.75.0", "0.75.0+cg.1")
+            or scanner.get("Version") not in ("0.75.0", "0.75.0+cg.1", "0.75.0+cg.2")
         ):
             raise ValueError("Candidate vulnerability evidence did not pass")
         counts[service] = dict(

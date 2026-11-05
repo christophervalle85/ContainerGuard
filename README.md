@@ -82,7 +82,7 @@ longer while Trivy downloads its vulnerability database into the worker's named
 cache volume. Internet access is needed for image resolution and scanner updates.
 
 The API image contains Python and the locked application dependencies. The worker
-also contains the patched Trivy build `0.75.0+cg.1`. Both run as UID/GID 10001, and neither mounts Docker's
+also contains the patched Trivy build `0.75.0+cg.2`. Both run as UID/GID 10001, and neither mounts Docker's
 socket. Submitted images are inspected remotely, without running them.
 Application code is copied during the build, so rebuild after changing it.
 
