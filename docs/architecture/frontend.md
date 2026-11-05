@@ -252,9 +252,10 @@ frontend is not proof that scanning dependencies are healthy. Document the UI's
 binding and a configurable server-side development proxy target for changed API
 ports. Only public values belong in browser assets; no service secret is needed.
 
-Use `frontend/` as the frontend build context so the Python root build allowlist
-stays narrow. Extend ignore rules for node_modules, build output, test artifacts,
-and frontend-local credentials. Preserve the existing migration prerequisite and
+Use the repository root as the frontend build context with the Dockerfile-specific
+`Dockerfile.frontend.dockerignore` allowlist. It includes only required frontend
+inputs and excludes node_modules, build output, test artifacts, and local credentials;
+the Python root allowlist stays narrow. Preserve the existing migration prerequisite and
 API/worker runtime configuration. Recreating services retains the existing named
 volumes; frontend changes do not create a new persistence mechanism.
 
@@ -303,11 +304,14 @@ development plan.
 
 `Dockerfile.frontend` builds with Node 24 and `npm ci`, then copies only the
 compiled assets into an unprivileged Nginx runtime. Its build context is
-`frontend/`; the Python image allowlist stays unchanged. Neither Node nor source
+the repository root, restricted by `Dockerfile.frontend.dockerignore`; the Python
+image allowlist stays unchanged. Neither Node nor source
 files, environment files, or the Docker socket are part of the serving container.
 The runtime uses UID/GID 101 and listens on 8080. The pinned stable-alpine image
-was verified as Nginx 1.30.5. Its multi-platform index is
-`sha256:15c994d10d6d78658721c3bcafff14cb281fba2a4bdf9d5ba92c416a472516e3`.
+was verified as Nginx 1.30.6. Its multi-platform index is
+`sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03`.
+The runtime applies available Alpine fixes for brotli, curl/libcurl, libexpat,
+libx11, libxpm, tiff and zlib before returning to the unprivileged user.
 The Node 24 Alpine build index is
 `sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1`.
 See the [upstream image documentation](https://github.com/nginx/docker-nginx-unprivileged).

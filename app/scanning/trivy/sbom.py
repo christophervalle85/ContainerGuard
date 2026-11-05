@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass
 from urllib.parse import parse_qsl, unquote, urlsplit
 
-SUPPORTED_SCANNER_VERSIONS = frozenset({"0.75.0", "0.75.0+cg.1"})
+SUPPORTED_SCANNER_VERSIONS = frozenset({"0.75.0", "0.75.0+cg.1", "0.75.0+cg.2"})
 
 MAX_SBOM_BYTES = 10 * 1024 * 1024
 _HUB_HOSTS = {"docker.io", "index.docker.io", "registry-1.docker.io"}

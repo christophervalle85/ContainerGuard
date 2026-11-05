@@ -34,7 +34,10 @@ def verify_published(manifest: dict, workspace: Path) -> dict:
                 timeout=300,
                 env=environment,
             )
-            verify_identity(registry.manifest(service, expected["digest"]), expected)
+            verify_identity(
+                registry.manifest(service, expected["digest"]),
+                {**expected, "manifest_digest": expected["digest"]},
+            )
             raw = command(
                 [
                     "docker",
@@ -49,6 +52,7 @@ def verify_published(manifest: dict, workspace: Path) -> dict:
             )
             info = json.loads(raw)
             actual = {
+                "digest": expected["digest"],
                 # Registry verification above binds the manifest to its config;
                 # Docker's local ID may name either one, depending on its store.
                 "image_id": expected["image_id"]
@@ -58,7 +62,7 @@ def verify_published(manifest: dict, workspace: Path) -> dict:
                 "platform": info["Os"] + "/" + info["Architecture"],
                 "labels": info["Config"].get("Labels") or {},
             }
-            verify_identity(actual, expected)
+            verify_identity(actual, {**expected, "manifest_digest": expected["digest"]})
     result = exercise_stack(images, workspace=workspace)
     result["anonymous_pulls"] = True
     result["version"] = manifest["version"]

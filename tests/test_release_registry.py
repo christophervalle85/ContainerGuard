@@ -305,3 +305,17 @@ def test_preflight_requests_indexes_so_existing_multiarch_tag_cannot_look_absent
         registry.Registry().manifest("api", "v1.0.0", allow_missing=True)
     assert "application/vnd.oci.image.index.v1+json" in seen[0]
     assert "application/vnd.docker.distribution.manifest.list.v2+json" in seen[0]
+
+
+@pytest.mark.parametrize(
+    "error", [[], {"errors": [None]}, {"errors": ["MANIFEST_UNKNOWN"]}]
+)
+def test_malformed_authenticated_missing_response_fails_closed(monkeypatch, error):
+    client = registry.Registry()
+    client.actor, client.credential = "owner", "test-only"
+    client.tokens["christophervalle85/containerguard-api"] = "test-only"
+    monkeypatch.setattr(
+        client, "_get", lambda *args: (404, {}, json.dumps(error).encode())
+    )
+    with pytest.raises(ValueError):
+        client.manifest("api", "v1.0.0", allow_missing=True)

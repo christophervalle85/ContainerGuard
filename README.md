@@ -33,10 +33,15 @@ end-to-end tour.
 
 ## Versioned images
 
-The release workflow is being added for separate API, worker and dashboard images
-on GHCR. The [release guide](docs/releases.md) covers digest-pinned installation,
-public-access verification and recovery. First-release publication is still pending;
-the source setup below remains the verified way to start the project.
+[ContainerGuard v0.1.0](https://github.com/christophervalle85/ContainerGuard/releases/tag/v0.1.0)
+is available as separate API, worker and dashboard images on GHCR. A fresh
+installation using the published linux/amd64 images passed anonymous pulls, a real
+scan, SBOM integrity checks, policy evaluation and persistence after recreation.
+A future signed release uses the schema-2 verification procedure in the release
+guide; no signed release has yet been qualified.
+
+Follow the [release guide](docs/releases.md) to run it without building source, or
+use the source setup below for development. This release is not signed and has no release-image SBOM or verified provenance.
 
 ## Run it locally
 
@@ -77,7 +82,7 @@ longer while Trivy downloads its vulnerability database into the worker's named
 cache volume. Internet access is needed for image resolution and scanner updates.
 
 The API image contains Python and the locked application dependencies. The worker
-also contains the patched Trivy build `0.75.0+cg.1`. Both run as UID/GID 10001, and neither mounts Docker's
+also contains the patched Trivy build `0.75.0+cg.2`. Both run as UID/GID 10001, and neither mounts Docker's
 socket. Submitted images are inspected remotely, without running them.
 Application code is copied during the build, so rebuild after changing it.
 
@@ -731,7 +736,7 @@ python3 -m scripts.scan_security --kind image --input containerguard-api:securit
 ```
 
 Repeat the image commands for `worker`; for `frontend`, use `Dockerfile.frontend`
-with build context `frontend`. CI contains the complete matrix. The installer
+with build context `.`. Its Dockerfile-specific allowlist isolates frontend inputs. CI contains the complete matrix. The installer
 builds Trivy from checksum-pinned source with reviewed Go patches; its first
 build needs internet access and can take several minutes. The API and worker use
 lean Alpine Python runtimes, with build tools and pip excluded from the runtime.

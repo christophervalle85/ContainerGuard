@@ -170,16 +170,17 @@ def test_unsupported_metadata_is_rejected_before_execution(
     assert calls == []
 
 
-def test_collect_accepts_the_patched_scanner_contract(monkeypatch):
+@pytest.mark.parametrize("version", ["0.75.0+cg.1", "0.75.0+cg.2"])
+def test_collect_accepts_the_patched_scanner_contract(monkeypatch, version):
     module = runner()
     payload = (
         Path("tests/fixtures/trivy/cyclonedx.json")
         .read_text()
-        .replace('"version": "0.75.0"', '"version": "0.75.0+cg.1"')
+        .replace('"version": "0.75.0"', f'"version": "{version}"')
     )
     monkeypatch.setattr(module, "run_bounded_command", lambda *a, **kw: payload)
     outcome = module.collect_sbom(
-        PINNED, platform="linux/amd64", scanner_version="0.75.0+cg.1"
+        PINNED, platform="linux/amd64", scanner_version=version
     )
     assert outcome.error_code is None
-    assert outcome.artifact.scanner_version == "0.75.0+cg.1"
+    assert outcome.artifact.scanner_version == version

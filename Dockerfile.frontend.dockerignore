@@ -1,19 +1,20 @@
+# Root Git context; only reviewed frontend build inputs are visible.
 # Include only compilation, test/typecheck and web-server inputs.
 **
-!.dockerignore
-!.npmrc
-!package.json
-!package-lock.json
-!index.html
-!nginx.conf
-!tsconfig.json
-!*.config.ts
-!src/
-!src/**
-!tests/
-!tests/**
-!public/
-!public/**
+!frontend/.dockerignore
+!frontend/.npmrc
+!frontend/package.json
+!frontend/package-lock.json
+!frontend/index.html
+!frontend/nginx.conf
+!frontend/tsconfig.json
+!frontend/*.config.ts
+!frontend/src/
+!frontend/src/**
+!frontend/tests/
+!frontend/tests/**
+!frontend/public/
+!frontend/public/**
 
 # Local configuration never belongs in a build context.
 **/.git

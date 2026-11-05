@@ -1,7 +1,9 @@
 # Versioned releases
 
-Status: implemented; first publication and public installation verification are
-pending the release checkpoints below.
+Status: implemented and exercised by the public v0.1.0 release. Anonymous pulls
+and fresh-installation verification passed; see the
+[verification record](../development/verification.md#published-release-verification).
+The schema-2 signing and verification path is implemented locally; a real signed release remains unqualified.
 
 ## Purpose and scope
 
@@ -19,8 +21,7 @@ Running that release on Apple Silicon requires Docker's amd64 emulation. Native
 ARM64 runtime builds have been exercised previously, but that does not qualify an
 ARM64 published release. Additional platforms require their own release checks.
 
-Signing, release-image SBOM distribution, and provenance verification belong to
-the supply-chain milestone. This release does not claim those guarantees. Existing
+The v0.1.0 release does not claim signing, release-image SBOM distribution, or provenance verification. Existing
 SBOM downloads describe submitted scan targets, not ContainerGuard release images.
 
 ## Approach
@@ -87,10 +88,11 @@ exceptions or change thresholds merely to obtain a release.
 
 Build each image once with linux/amd64 and its existing pinned base/tool inputs.
 Check the exact local image identified by its immutable image ID. Restrict each
-build context to required inputs. The frontend currently has a broad context:
-replace it with an allowlist that retains required TypeScript/configuration and
-build inputs while excluding environments, logs, Git data, generated output,
-local credentials, and unrelated files. The backend context should likewise
+build context to required inputs. The frontend uses the repository root Git context
+and `Dockerfile.frontend.dockerignore` allowlist to retain required TypeScript/configuration
+and build inputs while excluding environments, logs, Git data, generated output,
+local credentials, and unrelated files. The root Dockerfile path therefore matches
+the native provenance source contract. The backend context should likewise
 reject unintended files beneath included source directories.
 
 Use a fresh committed checkout, not a workstation directory. Never pass registry

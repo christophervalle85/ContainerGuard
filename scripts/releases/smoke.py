@@ -176,7 +176,7 @@ def stack_document(images: dict[str, str], project: str, password: str) -> dict:
     }
 
 
-def cleanup_stack(project: str, config: Path):
+def cleanup_stack(project: str, config: Path, *, environment=None):
     if not PROJECT.fullmatch(project) or config.is_symlink():
         raise ValueError("Refusing cleanup of an unowned stack")
     document = json.loads(config.read_text())
@@ -202,6 +202,7 @@ def cleanup_stack(project: str, config: Path):
             "--remove-orphans",
         ],
         timeout=700,
+        **({"env": environment} if environment is not None else {}),
     )
 
 
@@ -231,8 +232,13 @@ def check_sbom(metadata: dict, payload: bytes) -> str:
 
 
 def exercise_stack(
-    images: dict[str, str], *, workspace: Path, platform="linux/amd64"
+    images: dict[str, str], *, workspace: Path, platform="linux/amd64", environment=None
 ) -> dict:
+    def run(*args, **kwargs):
+        if environment is not None:
+            kwargs["env"] = environment
+        return command(*args, **kwargs)
+
     if platform != "linux/amd64":
         raise ValueError("Unsupported verification platform")
     project = "containerguard-release-verify-" + uuid4().hex[:12]
@@ -245,14 +251,14 @@ def exercise_stack(
     compose = ["docker", "compose", "-p", project, "-f", str(config)]
     error = None
     try:
-        command(
+        run(
             compose + ["up", "-d", "--no-build", "--wait", "--wait-timeout", "150"],
             timeout=210,
         )
-        migration = command(compose + ["ps", "-aq", "migrate"], capture=True).strip()
+        migration = run(compose + ["ps", "-aq", "migrate"], capture=True).strip()
         if (
             not migration
-            or command(
+            or run(
                 ["docker", "inspect", "--format", "{{.State.ExitCode}}", migration],
                 capture=True,
             ).strip()
@@ -261,9 +267,7 @@ def exercise_stack(
             raise ValueError("Verification migration failed")
 
         def address(service, port):
-            endpoint = command(
-                compose + ["port", service, str(port)], capture=True
-            ).strip()
+            endpoint = run(compose + ["port", service, str(port)], capture=True).strip()
             if not re.fullmatch(r"127\.0\.0\.1:[0-9]{1,5}", endpoint):
                 raise ValueError("Unexpected verification address")
             return "http://" + endpoint
@@ -348,7 +352,7 @@ def exercise_stack(
             evaluation["created_at"],
         ):
             raise ValueError("Verification evaluation identity changed")
-        command(
+        run(
             compose
             + [
                 "up",
@@ -394,7 +398,11 @@ def exercise_stack(
         raise
     finally:
         try:
-            cleanup_stack(project, config)
+            cleanup_stack(
+                project,
+                config,
+                **({"environment": environment} if environment is not None else {}),
+            )
         except Exception:
             if error is not None:
                 error.add_note(

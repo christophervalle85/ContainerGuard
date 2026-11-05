@@ -1,12 +1,13 @@
 {
   "trivy": {
-    "version": "0.75.0+cg.1",
+    "version": "0.75.0+cg.2",
     "build_target": "trivy",
     "dockerfile": "Dockerfile.worker",
     "source_commit": "591e9799316a602e703f0b484f6c6d7b234ec8f3",
     "source_sha256": "4a5bb1c16ccc55368843eb95ee9a25519a0bfef26609a8b4295f2060af43077e",
-    "go_version": "1.27.2",
-    "x_net_version": "0.60.0"
+    "go_version": "1.27.3",
+    "x_net_version": "0.60.0",
+    "go_jose_version": "4.1.6"
   },
   "gitleaks": {
     "version": "8.30.1",

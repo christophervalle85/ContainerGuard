@@ -44,7 +44,7 @@ jobs:
   publish:
     needs: [guard, quality]
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 45
     permissions:
       contents: read
       actions: read
@@ -58,7 +58,25 @@ jobs:
           ref: ${{ needs.guard.outputs.commit }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Download this run's exact checked candidate
+      - name: Install hash-locked release dependencies
+        run: |
+          python3 -m venv "$RUNNER_TEMP/release-python"
+          "$RUNNER_TEMP/release-python/bin/python" -m pip install --require-hashes -r security/release-requirements.txt
+          echo "$RUNNER_TEMP/release-python/bin" >> "$GITHUB_PATH"
+      - name: Install pinned release tools
+        run: |
+          bash scripts/install_release_tools.sh "$RUNNER_TEMP/release-tools"
+          echo "CG_RELEASE_TOOLS=$RUNNER_TEMP/release-tools" >> "$GITHUB_ENV"
+      - name: Validate candidate artifact metadata
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.guard.outputs.version }}
+          COMMIT: ${{ needs.guard.outputs.commit }}
+          ARTIFACT_ID: ${{ needs.quality.outputs.candidate_artifact_id }}
+        run: >-
+          python3 -m scripts.releases validate-transfer --producer candidate
+          --artifact-id "$ARTIFACT_ID" --version "$VERSION" --commit "$COMMIT"
+      - name: Download validated candidate artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           artifact-ids: ${{ needs.quality.outputs.candidate_artifact_id }}
@@ -69,31 +87,217 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.guard.outputs.version }}
           COMMIT: ${{ needs.guard.outputs.commit }}
-          CANDIDATE_ID: ${{ needs.quality.outputs.candidate_artifact_id }}
-        run: |
-          case "$CANDIDATE_ID" in ''|*[!0-9]*) exit 2 ;; esac
-          python3 -m scripts.releases publish --version "$VERSION" --commit "$COMMIT" --handoff-dir "$RUNNER_TEMP/checked-candidate"
-      - name: Transfer digest manifest to draft notes job
+        run: >-
+          python3 -m scripts.releases publish --version "$VERSION" --commit "$COMMIT"
+          --handoff-dir "$RUNNER_TEMP/checked-candidate"
+      - name: Transfer validated published-release
         id: manifest_upload
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: published-release-manifest
-          path: ${{ runner.temp }}/checked-candidate/release.json
-          retention-days: 7
+          name: published-release-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/checked-candidate/release.json
+          retention-days: 1
           if-no-files-found: error
       - name: Retain safe partial-publication record
-        if: ${{ failure() && hashFiles(format('{0}/checked-candidate/partial-publication.json', runner.temp)) != '' }}
+        if: ${{ failure() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: partial-publication
+          name: partial-publication-${{ github.run_attempt }}
           path: ${{ runner.temp }}/checked-candidate/partial-publication.json
           retention-days: 7
+          if-no-files-found: ignore
+
+  sign:
+    needs: [guard, quality, publish]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+      id-token: write
+    outputs:
+      signed_artifact_id: ${{ steps.signed_upload.outputs.artifact-id }}
+    steps:
+      - name: Check out reviewed release scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.guard.outputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install hash-locked release dependencies
+        run: |
+          python3 -m venv "$RUNNER_TEMP/release-python"
+          "$RUNNER_TEMP/release-python/bin/python" -m pip install --require-hashes -r security/release-requirements.txt
+          echo "$RUNNER_TEMP/release-python/bin" >> "$GITHUB_PATH"
+      - name: Install checksum-pinned Cosign
+        run: |
+          mkdir -p "$RUNNER_TEMP/release-tools"
+          url=$(python3 -c 'import json; print(json.load(open("security/release-tools.json"))["cosign"]["url"])')
+          digest=$(python3 -c 'import json; print(json.load(open("security/release-tools.json"))["cosign"]["sha256"])')
+          curl --fail --location --proto '=https' --proto-redir '=https' --max-filesize 268435456 --output "$RUNNER_TEMP/release-tools/cosign" "$url"
+          printf '%s  %s\n' "$digest" "$RUNNER_TEMP/release-tools/cosign" | sha256sum --check --status
+          chmod 755 "$RUNNER_TEMP/release-tools/cosign"
+          echo "CG_RELEASE_TOOLS=$RUNNER_TEMP/release-tools" >> "$GITHUB_ENV"
+      - name: Validate candidate artifact metadata
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.guard.outputs.version }}
+          COMMIT: ${{ needs.guard.outputs.commit }}
+          ARTIFACT_ID: ${{ needs.quality.outputs.candidate_artifact_id }}
+        run: >-
+          python3 -m scripts.releases validate-transfer --producer candidate
+          --artifact-id "$ARTIFACT_ID" --version "$VERSION" --commit "$COMMIT"
+      - name: Download validated candidate artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.quality.outputs.candidate_artifact_id }}
+          path: ${{ runner.temp }}/checked-candidate
+          merge-multiple: true
+      - name: Validate publish artifact metadata
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.guard.outputs.version }}
+          COMMIT: ${{ needs.guard.outputs.commit }}
+          ARTIFACT_ID: ${{ needs.publish.outputs.release_artifact_id }}
+        run: >-
+          python3 -m scripts.releases validate-transfer --producer publish
+          --artifact-id "$ARTIFACT_ID" --version "$VERSION" --commit "$COMMIT"
+      - name: Download validated publish artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.publish.outputs.release_artifact_id }}
+          path: ${{ runner.temp }}/published-release
+          merge-multiple: true
+      - name: Sign exact published images and typed evidence
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.guard.outputs.version }}
+          COMMIT: ${{ needs.guard.outputs.commit }}
+        run: |
+          python3 -m scripts.releases sign --version "$VERSION" --commit "$COMMIT" --manifest "$RUNNER_TEMP/published-release/release.json" --evidence-dir "$RUNNER_TEMP/checked-candidate" --output-dir "$RUNNER_TEMP/signed"
+          cp "$RUNNER_TEMP/published-release/release.json" "$RUNNER_TEMP/signed/release.json"
+      - name: Transfer validated signed-evidence
+        id: signed_upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: signed-evidence-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/signed/release.json
+            ${{ runner.temp }}/signed/api.sbom.json
+            ${{ runner.temp }}/signed/api.provenance.json
+            ${{ runner.temp }}/signed/api.build-record.json
+            ${{ runner.temp }}/signed/worker.sbom.json
+            ${{ runner.temp }}/signed/worker.provenance.json
+            ${{ runner.temp }}/signed/worker.build-record.json
+            ${{ runner.temp }}/signed/frontend.sbom.json
+            ${{ runner.temp }}/signed/frontend.provenance.json
+            ${{ runner.temp }}/signed/frontend.build-record.json
+          retention-days: 1
+          if-no-files-found: error
+      - name: Retain safe partial-signing record
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: partial-signing-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/signed/receipt.json
+          retention-days: 7
+          if-no-files-found: ignore
+
+  verify:
+    needs: [guard, sign]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      verified_artifact_id: ${{ steps.verified_upload.outputs.artifact-id }}
+    steps:
+      - name: Check out reviewed release scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.guard.outputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install hash-locked release dependencies
+        run: |
+          python3 -m venv "$RUNNER_TEMP/release-python"
+          "$RUNNER_TEMP/release-python/bin/python" -m pip install --require-hashes -r security/release-requirements.txt
+          echo "$RUNNER_TEMP/release-python/bin" >> "$GITHUB_PATH"
+      - name: Install checksum-verified disclosure scanner
+        run: |
+          bash scripts/install_security_tools.sh "$RUNNER_TEMP/security-bin"
+          echo "$RUNNER_TEMP/security-bin" >> "$GITHUB_PATH"
+      - name: Install checksum-pinned Cosign
+        run: |
+          mkdir -p "$RUNNER_TEMP/release-tools"
+          url=$(python3 -c 'import json; print(json.load(open("security/release-tools.json"))["cosign"]["url"])')
+          digest=$(python3 -c 'import json; print(json.load(open("security/release-tools.json"))["cosign"]["sha256"])')
+          curl --fail --location --proto '=https' --proto-redir '=https' --max-filesize 268435456 --output "$RUNNER_TEMP/release-tools/cosign" "$url"
+          printf '%s  %s\n' "$digest" "$RUNNER_TEMP/release-tools/cosign" | sha256sum --check --status
+          chmod 755 "$RUNNER_TEMP/release-tools/cosign"
+          echo "CG_RELEASE_TOOLS=$RUNNER_TEMP/release-tools" >> "$GITHUB_ENV"
+      - name: Validate sign artifact metadata
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.guard.outputs.version }}
+          COMMIT: ${{ needs.guard.outputs.commit }}
+          ARTIFACT_ID: ${{ needs.sign.outputs.signed_artifact_id }}
+        run: >-
+          python3 -m scripts.releases validate-transfer --producer sign
+          --artifact-id "$ARTIFACT_ID" --version "$VERSION" --commit "$COMMIT"
+      - name: Download validated sign artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.sign.outputs.signed_artifact_id }}
+          path: ${{ runner.temp }}/signed-evidence
+          merge-multiple: true
+      - name: Verify signed release anonymously
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+          COMMIT: ${{ needs.guard.outputs.commit }}
+        run: |
+          python3 -m scripts.releases verify-release --version "$VERSION" --commit "$COMMIT" --manifest "$RUNNER_TEMP/signed-evidence/release.json" --evidence-dir "$RUNNER_TEMP/signed-evidence" --output-dir "$RUNNER_TEMP/verified"
+          python3 -m scripts.releases check-assets --version "$VERSION" --commit "$COMMIT" --manifest "$RUNNER_TEMP/verified/release.json" --output-dir "$RUNNER_TEMP/verified"
+      - name: Transfer validated verified-release
+        id: verified_upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: verified-release-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/verified/release.json
+            ${{ runner.temp }}/verified/compose.release.yaml
+            ${{ runner.temp }}/verified/verification.json
+            ${{ runner.temp }}/verified/api.sbom.json
+            ${{ runner.temp }}/verified/api.provenance.json
+            ${{ runner.temp }}/verified/api.build-record.json
+            ${{ runner.temp }}/verified/worker.sbom.json
+            ${{ runner.temp }}/verified/worker.provenance.json
+            ${{ runner.temp }}/verified/worker.build-record.json
+            ${{ runner.temp }}/verified/frontend.sbom.json
+            ${{ runner.temp }}/verified/frontend.provenance.json
+            ${{ runner.temp }}/verified/frontend.build-record.json
+            ${{ runner.temp }}/verified/api.signature.bundle.json
+            ${{ runner.temp }}/verified/api.sbom.bundle.json
+            ${{ runner.temp }}/verified/api.provenance.bundle.json
+            ${{ runner.temp }}/verified/api.build-record.bundle.json
+            ${{ runner.temp }}/verified/worker.signature.bundle.json
+            ${{ runner.temp }}/verified/worker.sbom.bundle.json
+            ${{ runner.temp }}/verified/worker.provenance.bundle.json
+            ${{ runner.temp }}/verified/worker.build-record.bundle.json
+            ${{ runner.temp }}/verified/frontend.signature.bundle.json
+            ${{ runner.temp }}/verified/frontend.sbom.bundle.json
+            ${{ runner.temp }}/verified/frontend.provenance.bundle.json
+            ${{ runner.temp }}/verified/frontend.build-record.bundle.json
+          retention-days: 1
           if-no-files-found: error
 
   draft:
-    needs: [guard, publish]
+    needs: [guard, verify]
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 20
     permissions:
       contents: write
       actions: read
@@ -104,16 +308,35 @@ jobs:
           ref: ${{ needs.guard.outputs.commit }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Download this run's published digest manifest
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          artifact-ids: ${{ needs.publish.outputs.release_artifact_id }}
-          path: ${{ runner.temp }}/release-manifest
-          merge-multiple: true
-      - name: Create draft with installation assets
+      - name: Install hash-locked release dependencies
+        run: |
+          python3 -m venv "$RUNNER_TEMP/release-python"
+          "$RUNNER_TEMP/release-python/bin/python" -m pip install --require-hashes -r security/release-requirements.txt
+          echo "$RUNNER_TEMP/release-python/bin" >> "$GITHUB_PATH"
+      - name: Install checksum-verified disclosure scanner
+        run: |
+          bash scripts/install_security_tools.sh "$RUNNER_TEMP/security-bin"
+          echo "$RUNNER_TEMP/security-bin" >> "$GITHUB_PATH"
+      - name: Validate verify artifact metadata
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          MANIFEST_ID: ${{ needs.publish.outputs.release_artifact_id }}
-        run: |
-          case "$MANIFEST_ID" in ''|*[!0-9]*) exit 2 ;; esac
-          python3 -m scripts.releases draft --manifest "$RUNNER_TEMP/release-manifest/release.json" --output-dir "$RUNNER_TEMP/release-assets"
+          VERSION: ${{ needs.guard.outputs.version }}
+          COMMIT: ${{ needs.guard.outputs.commit }}
+          ARTIFACT_ID: ${{ needs.verify.outputs.verified_artifact_id }}
+        run: >-
+          python3 -m scripts.releases validate-transfer --producer verify
+          --artifact-id "$ARTIFACT_ID" --version "$VERSION" --commit "$COMMIT"
+      - name: Download validated verify artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.verify.outputs.verified_artifact_id }}
+          path: ${{ runner.temp }}/verified
+          merge-multiple: true
+      - name: Create draft with verified release assets
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.guard.outputs.version }}
+          COMMIT: ${{ needs.guard.outputs.commit }}
+        run: >-
+          python3 -m scripts.releases draft --version "$VERSION" --commit "$COMMIT"
+          --manifest "$RUNNER_TEMP/verified/release.json" --output-dir "$RUNNER_TEMP/verified"

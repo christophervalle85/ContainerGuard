@@ -99,7 +99,7 @@ def main() -> int:
                 capture_output=True,
             )
             metadata = json.loads(version.stdout)
-        if metadata.get("Version") not in {"0.75.0", "0.75.0+cg.1"}:
+        if metadata.get("Version") not in {"0.75.0", "0.75.0+cg.1", "0.75.0+cg.2"}:
             raise ValueError("Unexpected scanner version")
         report = read_json(report_path)
         summary = evaluate_report(

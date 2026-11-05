@@ -171,8 +171,8 @@ live scan or establish automatic recovery. See [SBOMs](sboms.md) and
 The frontend image has a locked Node 24 build stage and a pinned unprivileged
 Nginx runtime (UID/GID 101). It serves compiled static assets on container port
 8080, published only at localhost:8080 by default. Node and frontend development
-dependencies stay out of the runtime. The frontend uses its own build context;
-the Python context remains restricted to runtime inputs.
+dependencies stay out of the runtime. The frontend uses the repository root context with `Dockerfile.frontend.dockerignore`
+restricting it to frontend inputs. The Python root allowlist stays unchanged.
 
 Nginx forwards /api/ paths to api:8000 with Docker DNS re-resolution, preserving
 status codes and bodies. Missing assets return 404; UI deep links receive the SPA
@@ -209,9 +209,9 @@ Sampled memory maxima were 103.5 MiB API, 274.5 MiB worker, 12.34 MiB Redis, and
 peak measurements or production sizing. The worker limit leaves room for its
 scanner subprocesses, but larger images can need more resources.
 
-The worker ships `0.75.0+cg.1`: Trivy 0.75.0 source commit
-`591e9799316a602e703f0b484f6c6d7b234ec8f3`, rebuilt with Go 1.27.2 and
-`golang.org/x/net` 0.60.0. CI exports the same Docker build stage for its scanner.
+The worker ships `0.75.0+cg.2`: Trivy 0.75.0 source commit
+`591e9799316a602e703f0b484f6c6d7b234ec8f3`, rebuilt with Go 1.27.3,
+`golang.org/x/net` 0.60.0 and `github.com/go-jose/go-jose/v4` 4.1.6. CI exports the same Docker build stage for its scanner.
 This small downstream build removes findings in the upstream binary; it must be
 maintained and rechecked when upstream or Go changes. SBOM parsing accepts the
 reviewed original and patched versions, and requires the artifact's reported

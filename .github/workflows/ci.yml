@@ -200,9 +200,11 @@ jobs:
         env:
           SERVICE: ${{ matrix.service }}
         run: |
-          context=.
-          if [ "$SERVICE" = frontend ]; then context=frontend; fi
-          docker build --platform linux/amd64 -f "Dockerfile.$SERVICE" -t "containerguard-$SERVICE:security" "$context"
+          docker build --platform linux/amd64 -f "Dockerfile.$SERVICE" -t "containerguard-$SERVICE:security" .
+
+      - name: Smoke-test frontend runtime
+        if: matrix.service == 'frontend'
+        run: bash scripts/smoke_frontend_image.sh containerguard-frontend:security
 
       - name: Scan runtime image and apply vulnerability gate
         env:
@@ -225,7 +227,9 @@ jobs:
     if: ${{ inputs.release_candidate }}
     needs: [checks, frontend, dependencies]
     runs-on: ubuntu-24.04
-    timeout-minutes: 50
+    timeout-minutes: 70
+    permissions:
+      contents: read
     outputs:
       artifact_id: ${{ steps.candidate_upload.outputs.artifact-id }}
     steps:
@@ -235,6 +239,15 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
           ref: ${{ inputs.release_commit }}
+      - name: Install hash-locked release dependencies
+        run: |
+          python3 -m venv "$RUNNER_TEMP/release-python"
+          "$RUNNER_TEMP/release-python/bin/python" -m pip install --require-hashes -r security/release-requirements.txt
+          echo "$RUNNER_TEMP/release-python/bin" >> "$GITHUB_PATH"
+      - name: Install pinned release tools
+        run: |
+          bash scripts/install_release_tools.sh "$RUNNER_TEMP/release-tools"
+          echo "CG_RELEASE_TOOLS=$RUNNER_TEMP/release-tools" >> "$GITHUB_ENV"
       - name: Install checksum-verified security tools
         run: |
           bash scripts/install_security_tools.sh "$RUNNER_TEMP/security-bin"
@@ -250,7 +263,21 @@ jobs:
         id: candidate_upload
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: release-candidate
-          path: ${{ runner.temp }}/release-candidate/
+          name: release-candidate-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/release-candidate/handoff.json
+            ${{ runner.temp }}/release-candidate/checks-summary.json
+            ${{ runner.temp }}/release-candidate/api.oci.tar
+            ${{ runner.temp }}/release-candidate/api.sbom.json
+            ${{ runner.temp }}/release-candidate/api.provenance.json
+            ${{ runner.temp }}/release-candidate/api.build-record.json
+            ${{ runner.temp }}/release-candidate/worker.oci.tar
+            ${{ runner.temp }}/release-candidate/worker.sbom.json
+            ${{ runner.temp }}/release-candidate/worker.provenance.json
+            ${{ runner.temp }}/release-candidate/worker.build-record.json
+            ${{ runner.temp }}/release-candidate/frontend.oci.tar
+            ${{ runner.temp }}/release-candidate/frontend.sbom.json
+            ${{ runner.temp }}/release-candidate/frontend.provenance.json
+            ${{ runner.temp }}/release-candidate/frontend.build-record.json
           retention-days: 1
           if-no-files-found: error
