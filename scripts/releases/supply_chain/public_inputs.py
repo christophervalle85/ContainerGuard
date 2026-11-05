@@ -11,7 +11,7 @@ DOCKERFILES = dict(
         (
             "e981f24ea307af6d9363165501c5ac39c9a83bca5830d70041f6405f8e2e48e7",
             "80486fb2e1fc0fec745bf160fd64b7a84a40caa6abf419c44b7951120bd26597",
-            "ce02ad243705d2e66a3d9b05972fa91f07b2dc20c8c4968c01b41400569bf945",
+            "7de9990fb674f428dab3a2b29b99ec509d45e6528766d7b41bffb56799a05980",
         ),
         strict=True,
     )
@@ -39,7 +39,7 @@ NODE = (
 NGINX = (
     "nginxinc/nginx-unprivileged",
     "stable-alpine",
-    "15c994d10d6d78658721c3bcafff14cb281fba2a4bdf9d5ba92c416a472516e3",
+    "f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03",
 )
 IMAGES = {"api": (PYTHON, UV), "worker": (PYTHON, UV, GO), "frontend": (NODE, NGINX)}
 HTTP = (
@@ -144,10 +144,10 @@ def metadata(document, service):
         if has_image(document, NGINX):
             env |= {
                 "PATH=" + BASE_PATH,
-                "NGINX_VERSION=1.30.5",
+                "NGINX_VERSION=1.30.6",
                 "PKG_RELEASE=1",
                 "DYNPKG_RELEASE=1",
-                "NJS_VERSION=1.0.1",
+                "NJS_VERSION=1.0.2",
                 "NJS_RELEASE=1",
             }
     return env, cache
